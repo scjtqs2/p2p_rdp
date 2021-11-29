@@ -11,7 +11,8 @@ type ClientConfig struct {
 	ServerPort int    //服务端
 	Type       string //rdp的服务端还是客户端
 	ClientPort int    //客户端开的端口
-	AppName string //当前的服务组名称。client侧和server侧必须有相同的appName才能匹配上。
+	RdpP2pPort int    //rdp的转发请求端口
+	AppName    string //当前的服务组名称。client侧和server侧必须有相同的appName才能匹配上。
 }
 
 // 通过路径获取配置信息
@@ -33,6 +34,8 @@ func defaultConf() *ClientConfig {
 		ServerHost: "1.1.1.1.",
 		ServerPort: 30124,
 		Type:       common.CLIENT_CLIENT_TYPE,
+		AppName:    "rdp-p2p",
+		RdpP2pPort: 30122,
 		ClientPort: 30123,
 	}
 }

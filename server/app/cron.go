@@ -4,6 +4,7 @@ package app
 
 import (
 	"github.com/robfig/cron/v3"
+	"github.com/scjtqs2/p2p_rdp/common"
 	"os"
 	"os/signal"
 	"syscall"
@@ -42,20 +43,14 @@ func (l *UdpListener) clearPeers() {
 // 用来清理clients
 func (l *UdpListener) clearClientPeers(appName string) {
 	peers := l.PeersGet(appName)
-	var clients []Ip
-	for _, v := range peers.clients {
-		client := v
-		if checkExpire(client) {
-			clients = append(clients, client)
-		}
+	if !checkExpire(peers.Client) {
+		peers.Client.Addr = ""
 	}
-	peers = l.PeersGet(appName)
-	peers.clients = clients
 	l.PeersSet(appName, peers)
 }
 
 // 校验ip地址是否过期
-func checkExpire(ip Ip) bool {
+func checkExpire(ip common.Ip) bool {
 	check := time.Now().UnixNano() - 5*time.Minute.Nanoseconds()
 	if ip.Time.UnixNano() < check {
 		return false

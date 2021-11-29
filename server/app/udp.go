@@ -22,34 +22,7 @@ type UdpListener struct {
 
 type Peers struct {
 	Mu    *sync.RWMutex
-	peers map[string]*Peer
-}
-
-type Msg struct {
-	Type    string //消息类型
-	AppName string //应用类型
-	Res     Res
-}
-
-type Req struct {
-	AppName string //应用分类
-	Type    string //rdp的类型。用来区分rdp的服务端和rdp的客户端。
-	Message string //消息类型
-}
-
-type Res struct {
-	Code    int64  //错误码 0成功
-	Message string //消息
-}
-
-type Ip struct {
-	Addr string
-	Time time.Time
-}
-
-type Peer struct {
-	Server  Ip
-	clients []Ip
+	peers map[string]*common.Peer
 }
 
 //Run 启动脚本
@@ -62,7 +35,7 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 	}
 	log.Printf("本地地址: <%s> \n", l.Conn.LocalAddr().String())
 	l.peers = Peers{
-		peers: make(map[string]*Peer),
+		peers: make(map[string]*common.Peer),
 		Mu:    &sync.RWMutex{},
 	}
 	go func() {
@@ -74,7 +47,7 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 				continue
 			}
 			log.Printf("<%s> %s\n", remoteAddr.String(), data[:n])
-			var msg Req
+			var msg common.Req
 			err = json.Unmarshal(data[:n], &msg)
 			if err != nil {
 				log.Errorf("错误的udp包 remoteAdd=%s err=%s", remoteAddr.String(), err.Error())
@@ -98,7 +71,7 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 }
 
 //progressClientClient 处理客户侧的客户端请求
-func (l *UdpListener) progressClientClient(add *net.UDPAddr, req Req) {
+func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
 	//if req.Message != "" {
 	//	var message Msg
@@ -110,10 +83,10 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req Req) {
 	//}
 	//查找server侧的客户端地址并返回
 	if l.PeersGet(req.AppName).Server.Addr == "" {
-		msg, _ := json.Marshal(Msg{
+		msg, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
-			Res: Res{
+			Res: common.Res{
 				Code:    404, //不存在，404
 				Message: "服务侧不在线",
 			},
@@ -123,11 +96,11 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req Req) {
 		return
 	} else {
 		// server侧的ip存在
-		ips, _ := json.Marshal([]Ip{l.PeersGet(req.AppName).Server})
-		msg, _ := json.Marshal(Msg{
+		ips, _ := json.Marshal([]common.Ip{l.PeersGet(req.AppName).Server})
+		msg, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
-			Res: Res{
+			Res: common.Res{
 				Code:    0,
 				Message: string(ips),
 			},
@@ -138,13 +111,13 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req Req) {
 		serverPort, _ := strconv.Atoi(strings.Split(l.PeersGet(req.AppName).Server.Addr, ":")[1])
 		srcAddr := &net.UDPAddr{IP: net.IPv4zero, Port: l.Port} // 注意端口必须固定，udp打洞，需要两侧
 		dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(l.PeersGet(req.AppName).Server.Addr, ":")[0]), Port: serverPort}
-		clientIps, _ := json.Marshal(l.PeersGet(req.AppName).clients)
-		msg2server, _ := json.Marshal(Msg{
+		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
+		msg2server, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS,
-			Res: Res{
+			Res: common.Res{
 				Code:    0,
-				Message: string(clientIps),
+				Message: string(clientIp),
 			},
 		})
 		go l.WriteMsg(srcAddr, dstAddr, msg2server)
@@ -153,7 +126,7 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req Req) {
 }
 
 // 处理服务侧的客户端请求
-func (l *UdpListener) progressServerClient(add *net.UDPAddr, req Req) {
+func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Req) {
 	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
 	//if req.Message != "" {
 	//	var message Msg
@@ -165,11 +138,11 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req Req) {
 	//}
 	//查找client侧的客户端是否有地址
 	peers := l.PeersGet(req.AppName)
-	if peers == nil || len(peers.clients) <= 0 {
-		msg, _ := json.Marshal(Msg{
+	if peers == nil || peers.Client.Addr == "" {
+		msg, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS,
-			Res: Res{
+			Res: common.Res{
 				Code:    404, //不存在，404
 				Message: "客户侧不在线",
 			},
@@ -180,65 +153,56 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req Req) {
 	} else {
 		//clients有ip存在
 		//直接回包client侧ip的地址列表
-		clientIps, _ := json.Marshal(l.PeersGet(req.AppName).clients)
-		msg2server, _ := json.Marshal(Msg{
+		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
+		msg2server, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS,
-			Res: Res{
+			Res: common.Res{
 				Code:    0,
-				Message: string(clientIps),
+				Message: string(clientIp),
 			},
 		})
 		go l.WriteMsgBylconn(add, msg2server)
 		//对client客户端回server的ip地址。
-		serverIps, _ := json.Marshal([]Ip{l.PeersGet(req.AppName).Server})
-		msg2client, _ := json.Marshal(Msg{
+		serverIps, _ := json.Marshal([]common.Ip{l.PeersGet(req.AppName).Server})
+		msg2client, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
-			Res: Res{
+			Res: common.Res{
 				Code:    0,
 				Message: string(serverIps),
 			},
 		})
-		clients := l.PeersGet(req.AppName).clients
+		client := l.PeersGet(req.AppName).Client
 		go func() {
 			srcAddr := &net.UDPAddr{IP: net.IPv4zero, Port: l.Port} // 注意端口必须固定，udp打洞，需要两侧
-			for _, client := range clients {
-				cip := client
-				clientPort, _ := strconv.Atoi(strings.Split(cip.Addr, ":")[1])
-				dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(cip.Addr, ":")[0]), Port: clientPort}
-				l.WriteMsg(srcAddr, dstAddr, msg2client)
-			}
+			cip := client
+			clientPort, _ := strconv.Atoi(strings.Split(cip.Addr, ":")[1])
+			dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(cip.Addr, ":")[0]), Port: clientPort}
+			l.WriteMsg(srcAddr, dstAddr, msg2client)
 		}()
 	}
 }
 
 //   检查客户侧的客户端的Ip是否存在
 func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType string) bool {
-	if l.PeersGet(appName) == nil || len(l.PeersGet(appName).clients) <= 0 {
+	if l.PeersGet(appName) == nil {
 		switch clientType {
 		case common.CLIENT_CLIENT_TYPE:
-			l.PeersSet(appName, &Peer{clients: []Ip{{Addr: addr, Time: time.Now()}}})
+			l.PeersSet(appName, &common.Peer{Client: common.Ip{Addr: addr, Time: time.Now()}})
 		case common.CLIENT_SERVER_TYPE:
-			l.PeersSet(appName, &Peer{Server: Ip{Addr: addr, Time: time.Now()}})
+			l.PeersSet(appName, &common.Peer{Server: common.Ip{Addr: addr, Time: time.Now()}})
 		}
 		return false
 	}
 	switch clientType {
 	case common.CLIENT_CLIENT_TYPE:
-		for k, v := range l.PeersGet(appName).clients {
-			if addr == v.Addr {
-				//存在ip。更新时间点
-				peers := l.PeersGet(appName)
-				peers.clients[k].Time = time.Now()
-				l.PeersSet(appName, peers)
-				return true
-			}
-		}
 		peers := l.PeersGet(appName)
-		//到这里了，说明不存在
-		peers.clients = append(peers.clients, Ip{Addr: addr, Time: time.Now()})
-		l.PeersSet(appName, peers)
+		if peers.Client.Addr == addr {
+			peers.Client.Time = time.Now()
+			l.PeersSet(appName, peers)
+			return true
+		}
 	case common.CLIENT_SERVER_TYPE:
 		peers := l.PeersGet(appName)
 		if peers.Server.Addr == addr {
@@ -252,14 +216,14 @@ func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType strin
 }
 
 // PeersGet 读取peers
-func (l *UdpListener) PeersGet(appName string) *Peer {
+func (l *UdpListener) PeersGet(appName string) *common.Peer {
 	l.peers.Mu.RLock()
 	defer l.peers.Mu.RUnlock()
 	return l.peers.peers[appName]
 }
 
 // PeersSet 设置peers
-func (l *UdpListener) PeersSet(appName string, peer *Peer) {
+func (l *UdpListener) PeersSet(appName string, peer *common.Peer) {
 	l.peers.Mu.Lock()
 	defer l.peers.Mu.Unlock()
 	l.peers.peers[appName] = peer
