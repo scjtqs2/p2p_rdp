@@ -109,7 +109,6 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 		go l.WriteMsgBylconn(add, msg)
 		//同时给server侧发送client的ip
 		serverPort, _ := strconv.Atoi(strings.Split(l.PeersGet(req.AppName).Server.Addr, ":")[1])
-		srcAddr := &net.UDPAddr{IP: net.IPv4zero, Port: l.Port} // 注意端口必须固定，udp打洞，需要两侧
 		dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(l.PeersGet(req.AppName).Server.Addr, ":")[0]), Port: serverPort}
 		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
 		msg2server, _ := json.Marshal(common.Msg{
@@ -120,7 +119,7 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 				Message: string(clientIp),
 			},
 		})
-		go l.WriteMsg(srcAddr, dstAddr, msg2server)
+		go l.WriteMsg(dstAddr, msg2server)
 		return
 	}
 }
@@ -175,11 +174,10 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Req) {
 		})
 		client := l.PeersGet(req.AppName).Client
 		go func() {
-			srcAddr := &net.UDPAddr{IP: net.IPv4zero, Port: l.Port} // 注意端口必须固定，udp打洞，需要两侧
 			cip := client
 			clientPort, _ := strconv.Atoi(strings.Split(cip.Addr, ":")[1])
 			dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(cip.Addr, ":")[0]), Port: clientPort}
-			l.WriteMsg(srcAddr, dstAddr, msg2client)
+			l.WriteMsg(dstAddr, msg2client)
 		}()
 	}
 }
@@ -247,9 +245,13 @@ func (l *UdpListener) PeersKeys() []string {
 
 // 用l的conn回包 3次重试
 func (l *UdpListener) WriteMsgBylconn(add *net.UDPAddr, msg []byte) {
+	rsp, _ := json.Marshal(&common.UDPMsg{
+		Code: common.UDP_TYPE_DISCOVERY,
+		Data: msg,
+	})
 	i := 0
 	for i < 3 {
-		_, err := l.Conn.WriteTo(msg, add)
+		_, err := l.Conn.WriteTo(rsp, add)
 		if err == nil {
 			return
 		}
@@ -259,12 +261,14 @@ func (l *UdpListener) WriteMsgBylconn(add *net.UDPAddr, msg []byte) {
 }
 
 // 手动发包 3次重试
-func (l *UdpListener) WriteMsg(srcAddr *net.UDPAddr, dstAddr *net.UDPAddr, msg []byte) {
-	conn, _ := net.DialUDP("udp", srcAddr, dstAddr)
+func (l *UdpListener) WriteMsg(dstAddr *net.UDPAddr, msg []byte) {
+	rsp, _ := json.Marshal(&common.UDPMsg{
+		Code: common.UDP_TYPE_DISCOVERY,
+		Data: msg,
+	})
 	i := 0
-	defer conn.Close()
 	for i < 3 {
-		_, err := conn.Write(msg)
+		_, err := l.Conn.WriteToUDP(rsp, dstAddr)
 		if err == nil {
 			return
 		}

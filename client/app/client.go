@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"github.com/scjtqs2/p2p_rdp/common"
 	log "github.com/sirupsen/logrus"
-	"net"
-	"time"
 )
 
 // 打洞
@@ -13,49 +11,10 @@ func (l *UdpListener) bidirectionHole() {
 	if l.Status {
 		return
 	}
-	if l.ClientServerIp.Addr == "" {
-		return
-	}
 	log.Infof("udp打洞开始，addr= %s", l.ClientServerIp.Addr)
-	srcAddr := &net.UDPAddr{IP: net.IPv4zero, Port: l.Conf.ClientPort}
-	dstAddr := parseAddr(l.ClientServerIp.Addr)
-	conn, err := net.DialUDP("udp", srcAddr, dstAddr)
-	if err != nil {
-		log.Error(err)
-	}
 	shakeMsg, _ := json.Marshal(&common.UDPMsg{Code: 1, Data: []byte("我是打洞消息")})
 	// 向另一个peer发送一条udp消息(对方peer的nat设备会丢弃该消息,非法来源),用意是在自身的nat设备打开一条可进入的通道,这样对方peer就可以发过来udp消息
-	go func() {
-		for {
-			if l.Status {
-				log.Info("udp p2p on ,打洞 send breaked ")
-				return
-			}
-			if _, err = conn.Write(shakeMsg); err != nil {
-				log.Errorf("send handshake: %s", err.Error())
-			}
-			time.Sleep(10 * time.Second)
-		}
-	}()
-
-	go func() {
-		for {
-			if l.Status {
-				log.Info("udp p2p on ,打洞 read breaked ")
-				return
-			}
-			data := make([]byte, 1024)
-			n, _, err := conn.ReadFromUDP(data)
-			if err != nil {
-				log.Errorf("error during read: %s", err.Error())
-			} else {
-				log.Infof("打洞成功 收到数据:%s", data[:n])
-				l.ClientConn = conn
-				l.Status = true
-				return
-			}
-		}
-	}()
+	go l.WriteMsgToClient(shakeMsg)
 }
 
 // 本地udp端口 消息读取处理
@@ -74,15 +33,46 @@ func (l *UdpListener) localReadHandle() {
 		}
 		//0:心跳 1:打洞消息 2:转发消息
 		switch msg.Code {
-		case 0:
+		case common.UDP_TYPE_KEEP_ALIVE:
 			log.Infof("心跳包 msg=%s", string(msg.Data))
-		case 1:
+		case common.UDP_TYPE_BI_DIRECTION_HOLE:
 			log.Infof("打洞消息 msg=$s", string(msg.Data))
+			l.Status = true
 			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功")})
 			l.WriteMsgBylconn(remodeAddr, message)
-		case 2:
+		case common.UDP_TYPE_TRANCE:
 			//用rdp的端口发送数据
 			l.WriteMsgToRdp(msg.Data)
+		case common.UDP_TYPE_DISCOVERY:
+			//处理和svr之间的通信
+			var svcmsg common.Msg
+			json.Unmarshal(msg.Data, &svcmsg)
+			l.progressSvc(svcmsg)
 		}
+	}
+}
+
+func (l *UdpListener) progressSvc(msg common.Msg) {
+	switch msg.Type {
+	case common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS:
+		if msg.Res.Code != 0 {
+			log.Errorf("对方客户端未就绪,%+v", msg.Res)
+			return
+		}
+		err := json.Unmarshal([]byte(msg.Res.Message), &l.ClientServerIp)
+		if err != nil {
+			log.Errorf("解码json失败 err %s", err.Error())
+		}
+		l.bidirectionHole()
+	case common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS:
+		if msg.Res.Code != 0 {
+			log.Errorf("对方客户端未就绪,%+v", msg.Res)
+			return
+		}
+		err := json.Unmarshal([]byte(msg.Res.Message), &l.ClientServerIp)
+		if err != nil {
+			log.Errorf("解码json失败 err %s", err.Error())
+		}
+		l.bidirectionHole()
 	}
 }

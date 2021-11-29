@@ -5,3 +5,4 @@ const (
 	MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS = "MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS" //给客户侧的客户端返回服务侧的ip列表。单个
 	MESSAGE_TYPE_KEEP_ALIVE                        = "MESSAGE_TYPE_KEEP_ALIVE"                        //心跳 保活
 )
+

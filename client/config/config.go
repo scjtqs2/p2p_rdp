@@ -31,7 +31,7 @@ func GetConfigFronPath(c string) *ClientConfig {
 
 func defaultConf() *ClientConfig {
 	return &ClientConfig{
-		ServerHost: "1.1.1.1.",
+		ServerHost: "1.1.1.1",
 		ServerPort: 30124,
 		Type:       common.CLIENT_CLIENT_TYPE,
 		AppName:    "rdp-p2p",
