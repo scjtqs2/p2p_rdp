@@ -57,8 +57,6 @@ func main() {
 	log.Infof("welcome to use p2p_rdp client  by scjtqs  https://github.com/scjtqs2/p2p_rdp/client %s,build in %s", Version, Build)
 	udplistener := &app.UdpListener{}
 	udplistener.Run(conf)
-	defer udplistener.ClientConn.Close()
-	defer udplistener.ServerConn.Close()
 	defer udplistener.LocalConn.Close()
 	defer udplistener.Cron.Stop()
 	c := make(chan os.Signal, 1)
