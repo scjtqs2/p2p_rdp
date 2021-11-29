@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
-	"github.com/scjtqs2/p2p_rdp/server/app"
-	"github.com/scjtqs2/p2p_rdp/server/config"
+	"github.com/scjtqs2/p2p_rdp/client/app"
+	"github.com/scjtqs2/p2p_rdp/client/config"
 	"github.com/scjtqs2/utils/util"
 	log "github.com/sirupsen/logrus"
 	easy "github.com/t-tomalak/logrus-easy-formatter"
@@ -54,25 +54,26 @@ func main() {
 	}
 	conf := config.GetConfigFronPath(configPath)
 	conf.Save(configPath)
-	log.Infof("welcome to use p2p_rdp server  by scjtqs  https://github.com/scjtqs2/p2p_rdp %s,build in %s", Version, Build)
+	log.Infof("welcome to use p2p_rdp client  by scjtqs  https://github.com/scjtqs2/p2p_rdp %s,build in %s", Version, Build)
 	udplistener := &app.UdpListener{}
 	udplistener.Run(conf)
+	defer udplistener.ClientConn.Close()
+	defer udplistener.ServerConn.Close()
+	defer udplistener.LocalConn.Close()
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	<-c
-	udplistener.Cron.Stop()
-	udplistener.Conn.Close()
 }
 
 // help cli命令行-h的帮助提示
 func help() {
-	log.Infof(`p2p_rdp service
+	log.Infof(`p2p_rdp client
 version: %s
 built-on: %s
 
 Usage:
 
-server [OPTIONS]
+client [OPTIONS]
 
 Options:
 `, Version, Build)
