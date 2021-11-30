@@ -56,10 +56,12 @@ func (l *UdpListener) localReadHandle() {
 		switch msg.Code {
 		case common.UDP_TYPE_KEEP_ALIVE:
 			log.Infof("心跳包 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
+			l.Status.Status = true
+			l.Status.Time = time.Now()
 			continue
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
 			log.Infof("打洞消息 remoteAddr=%s msg=$s", remodeAddr, string(msg.Data))
-			if !l.checkStatus() {
+			if l.checkStatus() {
 				continue
 			}
 			l.Status.Status = true
