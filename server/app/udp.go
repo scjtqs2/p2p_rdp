@@ -73,14 +73,6 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 //progressClientClient 处理客户侧的客户端请求
 func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
-	//if req.Message != "" {
-	//	var message Msg
-	//	err:=json.Unmarshal([]byte(req.Message),&message)
-	//	if err == nil && message.Type==common.MESSAGE_TYPE_KEEP_ALIVE {
-	//		log.Infof("remoteaddr=%s keep alive",add.String())
-	//		return
-	//	}
-	//}
 	//查找server侧的客户端地址并返回
 	if l.PeersGet(req.AppName).Server.Addr == "" {
 		msg, _ := json.Marshal(common.Msg{
@@ -127,14 +119,6 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 // 处理服务侧的客户端请求
 func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Req) {
 	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
-	//if req.Message != "" {
-	//	var message Msg
-	//	err:=json.Unmarshal([]byte(req.Message),&message)
-	//	if err == nil && message.Type==common.MESSAGE_TYPE_KEEP_ALIVE {
-	//		log.Infof("remoteaddr=%s keep alive",add.String())
-	//		return
-	//	}
-	//}
 	//查找client侧的客户端是否有地址
 	peers := l.PeersGet(req.AppName)
 	if peers == nil || peers.Client.Addr == "" {
@@ -193,23 +177,25 @@ func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType strin
 		}
 		return false
 	}
+	peers := l.PeersGet(appName)
 	switch clientType {
 	case common.CLIENT_CLIENT_TYPE:
-		peers := l.PeersGet(appName)
 		if peers.Client.Addr == addr {
 			peers.Client.Time = time.Now()
 			l.PeersSet(appName, peers)
 			return true
 		}
+		peers.Client.Addr = addr
 	case common.CLIENT_SERVER_TYPE:
-		peers := l.PeersGet(appName)
 		if peers.Server.Addr == addr {
 			//更新时间点
 			peers.Server.Time = time.Now()
 			l.PeersSet(appName, peers)
 			return true
 		}
+		peers.Server.Addr = addr
 	}
+	l.PeersSet(appName, peers)
 	return false
 }
 
