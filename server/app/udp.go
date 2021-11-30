@@ -147,13 +147,13 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Req) {
 		})
 		go l.WriteMsgBylconn(add, msg2server)
 		//对client客户端回server的ip地址。
-		serverIps, _ := json.Marshal([]common.Ip{l.PeersGet(req.AppName).Server})
+		serverIp, _ := json.Marshal(l.PeersGet(req.AppName).Server)
 		msg2client, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
 			Res: common.Res{
 				Code:    0,
-				Message: string(serverIps),
+				Message: string(serverIp),
 			},
 		})
 		client := l.PeersGet(req.AppName).Client

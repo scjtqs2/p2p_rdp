@@ -80,7 +80,7 @@ func (l *UdpListener) progressSvc(msg common.Msg) {
 		}
 		err := json.Unmarshal([]byte(msg.Res.Message), &l.ClientServerIp)
 		if err != nil {
-			log.Errorf("解码json失败 err %s", err.Error())
+			log.Errorf("MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS 解码json失败 err %s", err.Error())
 		}
 		l.bidirectionHole()
 	case common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS:
@@ -90,7 +90,7 @@ func (l *UdpListener) progressSvc(msg common.Msg) {
 		}
 		err := json.Unmarshal([]byte(msg.Res.Message), &l.ClientServerIp)
 		if err != nil {
-			log.Errorf("解码json失败 err %s", err.Error())
+			log.Errorf("MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS 解码json失败 err %s", err.Error())
 		}
 		l.bidirectionHole()
 	}
