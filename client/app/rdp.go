@@ -18,7 +18,6 @@ func (l *UdpListener) initRdpListener() {
 		if err != nil {
 			log.Fatalf("init rdp listener faild port=%d ,err=%s", l.Conf.RdpP2pPort, err.Error())
 		}
-		l.RdpConn, err = l.RdpListener.Accept()
 	case common.CLIENT_SERVER_TYPE:
 		//初始化udp client
 		l.RdpConn, err = net.Dial("tcp", "127.0.0.1:3389")
@@ -29,6 +28,24 @@ func (l *UdpListener) initRdpListener() {
 }
 
 func (l *UdpListener) RdpHandler() {
+	var err error
+	switch l.Conf.Type {
+	case common.CLIENT_CLIENT_TYPE:
+		for{
+			l.RdpConn, err = l.RdpListener.Accept()
+			if err != nil {
+				fmt.Println("accept failed, err:", err)
+				continue
+			}
+			go l.rdpProcess()
+		}
+	case common.CLIENT_SERVER_TYPE:
+		l.rdpProcess()
+	}
+
+}
+
+func (l *UdpListener) rdpProcess()  {
 	for {
 		data := make([]byte, 1024)
 		switch l.Conf.Type {
@@ -53,6 +70,5 @@ func (l *UdpListener) RdpHandler() {
 				l.WriteMsgToClient(msg)
 			}
 		}
-
 	}
 }
