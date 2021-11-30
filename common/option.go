@@ -27,11 +27,15 @@ type Ip struct {
 }
 
 type Peer struct {
-	Server  Ip
+	Server Ip
 	Client Ip
 }
 
 type UDPMsg struct {
-	Code int64 //0:心跳 1:打洞消息 2:转发消息 3:和svc之间的通信
-	Data []byte //转发/携带 的数据
+	Code   int64  //0:心跳 1:打洞消息 2:转发消息 3:和svc之间的通信
+	Data   []byte //转发/携带 的数据
+	Seq    int    //包标记
+	Count  int    //当前标记的总包数量
+	Offset int    //当前包的指针
+	Lenth  int    //完整的包长度
 }

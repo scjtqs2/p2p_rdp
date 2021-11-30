@@ -60,7 +60,7 @@ func (l *UdpListener) localReadHandle() {
 			l.Status.Time = time.Now()
 			continue
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
-			log.Infof("打洞消息 remoteAddr=%s msg=$s", remodeAddr, string(msg.Data))
+			log.Infof("打洞消息 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
 			if l.checkStatus() {
 				continue
 			}
@@ -71,7 +71,9 @@ func (l *UdpListener) localReadHandle() {
 			l.WriteMsgToClient(message)
 		case common.UDP_TYPE_TRANCE:
 			//用rdp的端口发送数据
-			l.WriteMsgToRdp(msg.Data)
+			//需要提取udp的包进行拼包，再转发给tcp的rdp端口
+			go l.rdpMakeTcpPackageSend(msg)
+			//l.WriteMsgToRdp(msg.Data)
 		case common.UDP_TYPE_DISCOVERY:
 			//处理和svr之间的通信
 			var svcmsg common.Msg
