@@ -13,7 +13,8 @@ type UdpListener struct {
 	LocalConn      *net.UDPConn         //本地监听conn
 	ClientServerIp common.Ip            //server侧的客户端的地址
 	Status         *Status              //server侧的连接情况
-	RdpConn        *net.UDPConn         //rdp的3389端口转发
+	RdpConn        net.Conn             //rdp的3389端口转发
+	RdpListener    net.Listener         //rdp的3389端口转发
 	RdpAddr        string               //rdp客户端地址
 	Cron           *cron.Cron
 }
@@ -39,7 +40,15 @@ func (l *UdpListener) Run(config *config.ClientConfig) (err error) {
 	//初始化rdp的本地监听
 	l.initRdpListener()
 	//监听rdp
-	go l.RdpHandler()
+	go func() {
+		for {
+			if l.Conf.Type == common.CLIENT_CLIENT_TYPE {
+				l.RdpConn, err = l.RdpListener.Accept()
+			}
+			go l.RdpHandler()
+		}
+
+	}()
 	//发送心跳包维活
 	l.startCron()
 	return nil
