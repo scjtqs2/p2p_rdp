@@ -36,8 +36,8 @@ func (l *UdpListener) WriteMsgToSvr(msg []byte) {
 
 // WriteMsgToClient 给另一侧的client客户端发包
 func (l *UdpListener) WriteMsgToClient(msg []byte) {
-	if !l.Status {
-		log.Error("和另一侧的p2p客户端未建立连接")
+	if l.ClientServerIp.Addr == "" {
+		log.Error("没有获取到另一侧的ip地址")
 		return
 	}
 	dstAddr := parseAddr(l.ClientServerIp.Addr)

@@ -16,13 +16,15 @@ func (l *UdpListener) startCron() {
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)))
 	//定时执行任务
-	l.Cron.AddFunc("*/5 * * * * *", l.keepAliveSend)
+	l.Cron.AddFunc("*/5 * * * * *", l.keepAliveSendToSvc)
+	l.Cron.AddFunc("*/5 * * * * *", l.keepAliveSendToClient)
 	l.Cron.Start()
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 }
 
-func (l *UdpListener) keepAliveSend() {
+// keepAliveSendToSvc 给svc侧发送心跳包
+func (l *UdpListener) keepAliveSendToSvc() {
 	req := &common.Req{}
 	switch l.Conf.Type {
 	case common.CLIENT_SERVER_TYPE:
@@ -36,4 +38,13 @@ func (l *UdpListener) keepAliveSend() {
 		AppName: l.Conf.AppName,
 	})
 	req.Message = string(msg)
+	l.WriteMsgToSvr(msg)
+}
+
+// keepAliveSendToClient 给client侧发送心跳包
+func (l *UdpListener) keepAliveSendToClient() {
+	if l.ClientServerIp.Addr != "" {
+		msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_KEEP_ALIVE, Data: []byte("keepalive from " + l.Conf.Type)})
+		l.WriteMsgToClient(msg)
+	}
 }
