@@ -39,8 +39,6 @@ func (l *UdpListener) Run(config *config.ClientConfig) (err error) {
 
 	//初始化rdp的本地监听
 	l.initRdpListener()
-	//监听rdp
-	go l.RdpHandler()
 
 	//发送心跳包维活
 	l.startCron()

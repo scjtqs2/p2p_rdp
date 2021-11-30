@@ -40,7 +40,7 @@ func (l *UdpListener) initMsgToSvc() {
 // 本地udp端口 消息读取处理
 func (l *UdpListener) localReadHandle() {
 	for {
-		data := make([]byte, 1024)
+		data := make([]byte, 6000)
 		n, remodeAddr, err := l.LocalConn.ReadFromUDP(data)
 		if err != nil {
 			log.Errorf("read udp package from svc faild,error %s", err.Error())
