@@ -60,6 +60,6 @@ func (l *UdpListener) makeP2P() {
 		Code: common.UDP_TYPE_BI_DIRECTION_HOLE,
 		Data: []byte("我是打洞消息"),
 	})
-	log.Infof("开发发送打洞消息 addr=%s", l.ClientServerIp.Addr)
+	log.Infof("开始发送打洞消息 addr=%s", l.ClientServerIp.Addr)
 	l.WriteMsgToClient(msg)
 }

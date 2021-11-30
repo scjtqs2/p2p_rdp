@@ -21,6 +21,7 @@ func (l *UdpListener) Run(config *config.ClientConfig) (err error) {
 	l.Conf = config
 	//固定本地端口的监听
 	l.LocalConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort})
+	//l.LocalConn, err = net.DialUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort},&net.UDPAddr{IP: net.ParseIP(l.Conf.ServerHost), Port: l.Conf.ServerPort})
 	//处理打洞请求的回包
 	go l.localReadHandle()
 	//发送初始消息到svc

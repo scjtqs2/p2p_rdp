@@ -12,14 +12,14 @@ func (l *UdpListener) bidirectionHole() {
 		return
 	}
 	log.Infof("udp打洞开始，addr= %s", l.ClientServerIp.Addr)
-	shakeMsg, _ := json.Marshal(&common.UDPMsg{Code: 1, Data: []byte("我是打洞消息")})
+	shakeMsg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_BI_DIRECTION_HOLE, Data: []byte("我是打洞消息")})
 	// 向另一个peer发送一条udp消息(对方peer的nat设备会丢弃该消息,非法来源),用意是在自身的nat设备打开一条可进入的通道,这样对方peer就可以发过来udp消息
 	go l.WriteMsgToClient(shakeMsg)
 }
 
 // 发送信息给svc
-func (l *UdpListener) initMsgToSvc()  {
-	log.Infof("发送消息给svc，addr=%s:%d",l.Conf.ServerHost,l.Conf.ServerPort)
+func (l *UdpListener) initMsgToSvc() {
+	log.Infof("发送消息给svc，addr=%s:%d", l.Conf.ServerHost, l.Conf.ServerPort)
 	req := &common.Req{}
 	switch l.Conf.Type {
 	case common.CLIENT_SERVER_TYPE:
@@ -50,15 +50,17 @@ func (l *UdpListener) localReadHandle() {
 		if err != nil {
 			continue
 		}
+		log.Infof("收到的消息 remoteAddr=%s msg=%s", remodeAddr, msg.Data)
 		//0:心跳 1:打洞消息 2:转发消息
 		switch msg.Code {
 		case common.UDP_TYPE_KEEP_ALIVE:
-			log.Infof("心跳包 msg=%s", string(msg.Data))
+			log.Infof("心跳包 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
-			log.Infof("打洞消息 msg=$s", string(msg.Data))
+			log.Infof("打洞消息 remoteAddr=%s msg=$s", remodeAddr, string(msg.Data))
 			l.Status = true
 			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功")})
-			l.WriteMsgBylconn(remodeAddr, message)
+			//l.WriteMsgBylconn(remodeAddr, message)
+			l.WriteMsgToClient(message)
 		case common.UDP_TYPE_TRANCE:
 			//用rdp的端口发送数据
 			l.WriteMsgToRdp(msg.Data)
