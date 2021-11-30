@@ -55,8 +55,12 @@ func (l *UdpListener) localReadHandle() {
 		switch msg.Code {
 		case common.UDP_TYPE_KEEP_ALIVE:
 			log.Infof("心跳包 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
+			continue
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
 			log.Infof("打洞消息 remoteAddr=%s msg=$s", remodeAddr, string(msg.Data))
+			if l.Status {
+				continue
+			}
 			l.Status = true
 			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功")})
 			//l.WriteMsgBylconn(remodeAddr, message)
