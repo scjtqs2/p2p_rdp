@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 //用来发送心跳包
@@ -20,6 +21,7 @@ func (l *UdpListener) startCron() {
 	l.Cron.AddFunc("*/5 * * * * *", l.keepAliveSendToSvc)
 	l.Cron.AddFunc("*/5 * * * * *", l.keepAliveSendToClient)
 	l.Cron.AddFunc("*/5 * * * * *", l.makeP2P)
+	l.Cron.AddFunc("*/5 * * * * *", l.checkStatusCron)
 	l.Cron.Start()
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
@@ -53,7 +55,7 @@ func (l *UdpListener) makeP2P() {
 		log.Error("没有获取到另一侧的udp地址")
 		return
 	}
-	if l.Status {
+	if l.checkStatus() {
 		return
 	}
 	msg, _ := json.Marshal(&common.UDPMsg{
@@ -62,4 +64,11 @@ func (l *UdpListener) makeP2P() {
 	})
 	log.Infof("开始发送打洞消息 addr=%s", l.ClientServerIp.Addr)
 	l.WriteMsgToClient(msg)
+}
+
+// 检测 p2p状态
+func (l *UdpListener) checkStatusCron() {
+	if l.Status.Time.UnixNano() < (time.Now().UnixNano() - 30*time.Second.Nanoseconds()) {
+		l.Status.Status = false
+	}
 }

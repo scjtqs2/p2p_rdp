@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // WriteMsgBylconn 本地localconn发包
@@ -63,4 +64,12 @@ func parseAddr(addr string) *net.UDPAddr {
 		IP:   net.ParseIP(t[0]),
 		Port: port,
 	}
+}
+
+// 有效期30秒
+func (l *UdpListener) checkStatus() bool {
+	if !l.Status.Status || l.Status.Time.UnixNano() < (time.Now().UnixNano() - 30*time.Second.Nanoseconds()) {
+		return false
+	}
+	return true
 }

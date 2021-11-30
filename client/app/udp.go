@@ -5,20 +5,29 @@ import (
 	"github.com/scjtqs2/p2p_rdp/client/config"
 	"github.com/scjtqs2/p2p_rdp/common"
 	"net"
+	"time"
 )
 
 type UdpListener struct {
 	Conf           *config.ClientConfig //本地配置信息
 	LocalConn      *net.UDPConn         //本地监听conn
 	ClientServerIp common.Ip            //server侧的客户端的地址
-	Status         bool                 //server侧的连接情况
+	Status         *Status              //server侧的连接情况
 	RdpConn        *net.UDPConn         //rdp的3389端口转发
 	RdpAddr        string               //rdp客户端地址
 	Cron           *cron.Cron
 }
 
+type Status struct {
+	Status bool
+	Time   time.Time
+}
+
 func (l *UdpListener) Run(config *config.ClientConfig) (err error) {
 	l.Conf = config
+	l.Status = &Status{
+		Status: false,
+	}
 	//固定本地端口的监听
 	l.LocalConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort})
 	//l.LocalConn, err = net.DialUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort},&net.UDPAddr{IP: net.ParseIP(l.Conf.ServerHost), Port: l.Conf.ServerPort})

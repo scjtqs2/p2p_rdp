@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"github.com/scjtqs2/p2p_rdp/common"
 	log "github.com/sirupsen/logrus"
+	"time"
 )
 
 // 打洞
 func (l *UdpListener) bidirectionHole() {
-	if l.Status {
+	if l.checkStatus() {
 		return
 	}
 	log.Infof("udp打洞开始，addr= %s", l.ClientServerIp.Addr)
@@ -58,10 +59,11 @@ func (l *UdpListener) localReadHandle() {
 			continue
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
 			log.Infof("打洞消息 remoteAddr=%s msg=$s", remodeAddr, string(msg.Data))
-			if l.Status {
+			if !l.checkStatus() {
 				continue
 			}
-			l.Status = true
+			l.Status.Status = true
+			l.Status.Time = time.Now()
 			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功")})
 			//l.WriteMsgBylconn(remodeAddr, message)
 			l.WriteMsgToClient(message)
