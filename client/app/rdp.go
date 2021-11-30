@@ -31,15 +31,28 @@ func (l *UdpListener) initRdpListener() {
 func (l *UdpListener) RdpHandler() {
 	for {
 		data := make([]byte, 1024)
-		reader := bufio.NewReader(l.RdpConn)
+		switch l.Conf.Type {
+		case common.CLIENT_CLIENT_TYPE:
+			reader := bufio.NewReader(l.RdpConn)
 
-		n, err := reader.Read(data[:])
-		if err != nil {
-			log.Errorf("error during read: %s", err.Error())
-		} else {
-			msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
-			//转发到远程client
-			l.WriteMsgToClient(msg)
+			n, err := reader.Read(data[:])
+			if err != nil {
+				log.Errorf("error during read: %s", err.Error())
+			} else {
+				msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
+				//转发到远程client
+				l.WriteMsgToClient(msg)
+			}
+		case common.CLIENT_SERVER_TYPE:
+			n,err := l.RdpConn.Read(data[:])
+			if err != nil {
+				log.Errorf("error during read: %s", err.Error())
+			}else {
+				msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
+				//转发到远程client
+				l.WriteMsgToClient(msg)
+			}
 		}
+
 	}
 }
