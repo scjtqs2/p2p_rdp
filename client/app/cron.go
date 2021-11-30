@@ -27,7 +27,7 @@ func (l *UdpListener) startCron() {
 
 // keepAliveSendToSvc 给svc侧发送心跳包
 func (l *UdpListener) keepAliveSendToSvc() {
-	req := &common.Req{}
+	req := &common.Msg{AppName: l.Conf.AppName}
 	switch l.Conf.Type {
 	case common.CLIENT_SERVER_TYPE:
 		req.Type = common.CLIENT_SERVER_TYPE
@@ -35,11 +35,7 @@ func (l *UdpListener) keepAliveSendToSvc() {
 		req.Type = common.CLIENT_CLIENT_TYPE
 	}
 	req.AppName = l.Conf.AppName
-	msg, _ := json.Marshal(&common.Msg{
-		Type:    common.MESSAGE_TYPE_KEEP_ALIVE,
-		AppName: l.Conf.AppName,
-	})
-	req.Message = string(msg)
+	msg, _ := json.Marshal(req)
 	l.WriteMsgToSvr(msg)
 }
 

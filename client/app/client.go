@@ -19,7 +19,7 @@ func (l *UdpListener) bidirectionHole() {
 
 // 发送信息给svc
 func (l *UdpListener) initMsgToSvc()  {
-	log.Infof("发送消息给svc，addr=%s:%d",l.Conf.ServerPort,l.Conf.ServerPort)
+	log.Infof("发送消息给svc，addr=%s:%d",l.Conf.ServerHost,l.Conf.ServerPort)
 	req := &common.Req{}
 	switch l.Conf.Type {
 	case common.CLIENT_SERVER_TYPE:
