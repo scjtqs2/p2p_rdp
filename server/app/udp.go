@@ -96,13 +96,13 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 		return
 	} else {
 		// server侧的ip存在
-		ips, _ := json.Marshal([]common.Ip{l.PeersGet(req.AppName).Server})
+		serverIp, _ := json.Marshal(l.PeersGet(req.AppName).Server)
 		msg, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
 			Res: common.Res{
 				Code:    0,
-				Message: string(ips),
+				Message: string(serverIp),
 			},
 		})
 		//发给client侧 server的ip地址。

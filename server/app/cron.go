@@ -30,7 +30,7 @@ func (l *UdpListener) clearPeers() {
 			appName := v
 			peers := l.PeersGet(appName)
 			//校验server侧 并清理
-			if !checkExpire(peers.Server) {
+			if peers != nil && !checkExpire(peers.Server) {
 				peers.Server.Addr = ""
 				l.PeersSet(appName, peers)
 			}
@@ -43,7 +43,7 @@ func (l *UdpListener) clearPeers() {
 // 用来清理clients
 func (l *UdpListener) clearClientPeers(appName string) {
 	peers := l.PeersGet(appName)
-	if !checkExpire(peers.Client) {
+	if peers != nil && !checkExpire(peers.Client) {
 		peers.Client.Addr = ""
 	}
 	l.PeersSet(appName, peers)
