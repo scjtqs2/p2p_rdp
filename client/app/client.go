@@ -17,6 +17,25 @@ func (l *UdpListener) bidirectionHole() {
 	go l.WriteMsgToClient(shakeMsg)
 }
 
+// 发送信息给svc
+func (l *UdpListener) initMsgToSvc()  {
+	log.Infof("发送消息给svc，addr=%s:%d",l.Conf.ServerPort,l.Conf.ServerPort)
+	req := &common.Req{}
+	switch l.Conf.Type {
+	case common.CLIENT_SERVER_TYPE:
+		req.Type = common.CLIENT_SERVER_TYPE
+	case common.CLIENT_CLIENT_TYPE:
+		req.Type = common.CLIENT_CLIENT_TYPE
+	}
+	req.AppName = l.Conf.AppName
+	msg, _ := json.Marshal(&common.Msg{
+		Type:    common.MESSAGE_TYPE_KEEP_ALIVE,
+		AppName: l.Conf.AppName,
+	})
+	req.Message = string(msg)
+	l.WriteMsgToSvr(msg)
+}
+
 // 本地udp端口 消息读取处理
 func (l *UdpListener) localReadHandle() {
 	for {
