@@ -50,13 +50,15 @@ func (l *UdpListener) rdpProcessTrace(rdpConn net.Conn) {
 	reader := bufio.NewReader(rdpConn)
 
 	n, err := reader.Read(data[:])
+	tcpPackage:=data[:n]
+	log.Infof("n=%d , err=%v,data=%v",n,err,tcpPackage)
 	if err != nil {
 		log.Errorf("error during read: %s", err.Error())
 	} else {
 		//msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
 		//转发到远程client
 		//l.WriteMsgToClient(msg)
-		l.rdpMakeUdpPackageSend(data[:n])
+		l.rdpMakeUdpPackageSend(tcpPackage)
 	}
 }
 
@@ -98,6 +100,7 @@ func (l *UdpListener) rdpMakeUdpPackageSend(data []byte) {
 			sliceEnd = packageLen
 		}
 		msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: data[sliceStart:sliceEnd], Seq: seq, Offset: i, Count: page, Lenth: packageLen})
+		log.Infof("tcp 写包 msg=%+V", msg)
 		l.WriteMsgToClient(msg)
 	}
 }
@@ -111,6 +114,7 @@ var packageChan = make(chan common.UDPMsg, 10)
 
 // rdpMakeTcpPackageSend  将拆分了的udp包拼接回tcp包，异步
 func (l *UdpListener) rdpMakeTcpPackageSend(msg common.UDPMsg) {
+	log.Infof("udp 写包 msg")
 	packageChan <- msg
 }
 
@@ -119,6 +123,7 @@ func (l *UdpListener) rdpMakeTcpPackageSendBackend() {
 	for {
 		var m = make(map[int]bool)
 		msg := <-packageChan
+		log.Infof("udp package msg= %+v", msg)
 		seq := strconv.Itoa(msg.Seq)
 		if msg.Count == 1 {
 			l.WriteMsgToRdp(msg.Data)

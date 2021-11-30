@@ -72,7 +72,7 @@ func (l *UdpListener) localReadHandle() {
 		case common.UDP_TYPE_TRANCE:
 			//用rdp的端口发送数据
 			//需要提取udp的包进行拼包，再转发给tcp的rdp端口
-			go l.rdpMakeTcpPackageSend(msg)
+			l.rdpMakeTcpPackageSend(msg)
 			//l.WriteMsgToRdp(msg.Data)
 		case common.UDP_TYPE_DISCOVERY:
 			//处理和svr之间的通信
