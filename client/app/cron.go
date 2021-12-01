@@ -38,14 +38,14 @@ func (l *UdpListener) keepAliveSendToSvc() {
 	}
 	req.AppName = l.Conf.AppName
 	msg, _ := json.Marshal(req)
-	l.WriteMsgToSvr(msg)
+	go l.WriteMsgToSvr(msg)
 }
 
 // keepAliveSendToClient 给client侧发送心跳包
 func (l *UdpListener) keepAliveSendToClient() {
 	if l.ClientServerIp.Addr != "" {
 		msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_KEEP_ALIVE, Data: []byte("keepalive from " + l.Conf.Type)})
-		l.WriteMsgToClient(msg)
+		go l.WriteMsgToClient(msg)
 	}
 }
 
@@ -63,7 +63,7 @@ func (l *UdpListener) makeP2P() {
 		Data: []byte("我是打洞消息"),
 	})
 	log.Infof("开始发送打洞消息 addr=%s", l.ClientServerIp.Addr)
-	l.WriteMsgToClient(msg)
+	go l.WriteMsgToClient(msg)
 }
 
 // 检测 p2p状态

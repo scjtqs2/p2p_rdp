@@ -29,6 +29,8 @@ func (l *UdpListener) Run(config *config.ClientConfig) (err error) {
 	l.Status = &Status{
 		Status: false,
 	}
+	go l.udpSendBackend()
+	go l.rdpSendBackend()
 	//固定本地端口的监听
 	l.LocalConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort})
 	//l.LocalConn, err = net.DialUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort},&net.UDPAddr{IP: net.ParseIP(l.Conf.ServerHost), Port: l.Conf.ServerPort})

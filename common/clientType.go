@@ -9,4 +9,4 @@ const (
 	UDP_TYPE_DISCOVERY         = 3                    // 3：和svc服务之间的通信
 )
 
-var PACKAGE_SIZE int = 5000 //tcp的包分割大小
+var PACKAGE_SIZE int = 1024 //tcp的包分割大小

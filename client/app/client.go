@@ -34,13 +34,13 @@ func (l *UdpListener) initMsgToSvc() {
 		AppName: l.Conf.AppName,
 	})
 	req.Message = string(msg)
-	l.WriteMsgToSvr(msg)
+	go l.WriteMsgToSvr(msg)
 }
 
 // 本地udp端口 消息读取处理
 func (l *UdpListener) localReadHandle() {
 	for {
-		data := make([]byte, 6000)
+		data := make([]byte, common.PACKAGE_SIZE)
 		n, remodeAddr, err := l.LocalConn.ReadFromUDP(data)
 		if err != nil {
 			log.Errorf("read udp package from svc faild,error %s", err.Error())
@@ -67,13 +67,21 @@ func (l *UdpListener) localReadHandle() {
 			l.Status.Status = true
 			l.Status.Time = time.Now()
 			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功")})
-			//l.WriteMsgBylconn(remodeAddr, message)
-			l.WriteMsgToClient(message)
+			go l.WriteMsgToClient(message)
 		case common.UDP_TYPE_TRANCE:
 			//用rdp的端口发送数据
+			recv := msg.Data
 			//需要提取udp的包进行拼包，再转发给tcp的rdp端口
-			l.rdpMakeTcpPackageSend(msg)
-			//l.WriteMsgToRdp(msg.Data)
+			//l.rdpMakeTcpPackageSend(common.UDPMsg{
+			//	Code:   msg.Code,
+			//	Data:   recv,
+			//	Seq:    msg.Seq,
+			//	Count:  msg.Count,
+			//	Offset: msg.Offset,
+			//	Lenth:  msg.Lenth,
+			//})
+			log.Printf("tcp trance n=%d,err=%v,data=%v", n, err, recv)
+			go l.WriteMsgToRdp(recv)
 		case common.UDP_TYPE_DISCOVERY:
 			//处理和svr之间的通信
 			var svcmsg common.Msg

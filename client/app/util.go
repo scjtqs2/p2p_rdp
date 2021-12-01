@@ -11,33 +11,17 @@ import (
 
 // WriteMsgBylconn 本地localconn发包
 func (l *UdpListener) WriteMsgBylconn(add *net.UDPAddr, msg []byte) {
-	i := 0
-	for i < 3 {
-		_, err := l.LocalConn.WriteTo(msg, add)
-		if err == nil {
-			return
-		}
-		log.Errorf("write to addr=%s faild", add.String())
-		i++
-	}
+	UdpWriteChan <- UdpWrite{Addr: add, Data: msg}
 }
 
 // WriteMsgToSvr 手动发包给svr的p2p服务端
 func (l *UdpListener) WriteMsgToSvr(msg []byte) {
-	i := 0
 	//dstAddr := &net.UDPAddr{IP: net.ParseIP(l.Conf.ServerHost), Port: l.Conf.ServerPort}
 	dstAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", l.Conf.ServerHost, l.Conf.ServerPort))
 	if err != nil {
 		log.Fatalf("解析svc的地址失败,err=%s", err.Error())
 	}
-	for i < 3 {
-		_, err := l.LocalConn.WriteToUDP(msg, dstAddr)
-		if err == nil {
-			return
-		}
-		log.Errorf("write to svr p2p server faild,err=%s,addr=%s", err.Error(), l.LocalConn.RemoteAddr().String())
-		i++
-	}
+	UdpWriteChan <- UdpWrite{Addr: dstAddr, Data: msg}
 }
 
 // WriteMsgToClient 给另一侧的client客户端发包
@@ -47,19 +31,11 @@ func (l *UdpListener) WriteMsgToClient(msg []byte) {
 		return
 	}
 	dstAddr := parseAddr(l.ClientServerIp.Addr)
-	i := 0
-	for i < 3 {
-		_, err := l.LocalConn.WriteToUDP(msg, dstAddr)
-		if err == nil {
-			return
-		}
-		log.Errorf("write to  p2p client faild,err=%s,addr=%s", err.Error(), l.LocalConn.RemoteAddr().String())
-		i++
-	}
+	UdpWriteChan <- UdpWrite{Addr: dstAddr, Data: msg}
 }
 
-func (l *UdpListener) WriteMsgToRdp(msg []byte) (int, error) {
-	return l.RdpConn.Write(msg)
+func (l *UdpListener) WriteMsgToRdp(msg []byte) {
+	RdpWriteChan <- msg
 }
 
 func parseAddr(addr string) *net.UDPAddr {
@@ -77,4 +53,27 @@ func (l *UdpListener) checkStatus() bool {
 		return false
 	}
 	return true
+}
+
+var UdpWriteChan = make(chan UdpWrite)
+
+type UdpWrite struct {
+	Addr *net.UDPAddr
+	Data []byte
+}
+
+func (l *UdpListener) udpSendBackend() {
+	for {
+		udpWrite := <-UdpWriteChan
+		l.LocalConn.WriteToUDP(udpWrite.Data, udpWrite.Addr)
+	}
+}
+
+var RdpWriteChan = make(chan []byte)
+
+func (l *UdpListener) rdpSendBackend() {
+	for {
+		msg := <-RdpWriteChan
+		l.RdpConn.Write(msg)
+	}
 }

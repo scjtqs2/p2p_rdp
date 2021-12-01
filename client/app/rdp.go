@@ -29,7 +29,7 @@ func (l *UdpListener) initRdpListener() {
 		go l.rdpClientProcess()
 	}
 	// 添加后台拼包
-	go l.rdpMakeTcpPackageSendBackend()
+	//go l.rdpMakeTcpPackageSendBackend()
 }
 
 func (l *UdpListener) RdpHandler() {
@@ -50,7 +50,7 @@ func (l *UdpListener) rdpProcessTrace() {
 	reader := bufio.NewReader(l.RdpConn)
 	for {
 		//l.RdpConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, err := reader.Read(data[:])
+		n, err := reader.Read(data)
 		tcpPackage := data[:n]
 		if err == io.EOF {
 			l.RdpConn.Close()
@@ -60,10 +60,10 @@ func (l *UdpListener) rdpProcessTrace() {
 			log.Errorf("error during read: %s", err.Error())
 			break
 		} else {
-			//msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
+			msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: tcpPackage})
 			//转发到远程client
-			//l.WriteMsgToClient(msg)
-			go l.rdpMakeUdpPackageSend(tcpPackage)
+			go l.WriteMsgToClient(msg)
+			//go l.rdpMakeUdpPackageSend(tcpPackage)
 		}
 	}
 
@@ -85,7 +85,7 @@ func (l *UdpListener) rdpClientReadProcess() {
 	for {
 		data := make([]byte, common.PACKAGE_SIZE)
 		//var data []byte
-		n, err := l.RdpConn.Read(data[:])
+		n, err := l.RdpConn.Read(data)
 		if err == io.EOF {
 			continue
 		}
@@ -94,11 +94,11 @@ func (l *UdpListener) rdpClientReadProcess() {
 			l.RdpConn.Close()
 			return
 		} else {
-			//msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
-			//转发到远程client
-			//l.WriteMsgToClient(msg)
 			recv := data[:n]
-			go l.rdpMakeUdpPackageSend(recv)
+			msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: recv})
+			//转发到远程client
+			go l.WriteMsgToClient(msg)
+			//go l.rdpMakeUdpPackageSend(recv)
 		}
 	}
 }
@@ -123,7 +123,7 @@ func (l *UdpListener) rdpMakeUdpPackageSend(data []byte) {
 		}
 		msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: data[sliceStart:sliceEnd], Seq: seq, Offset: i, Count: page, Lenth: packageLen})
 		//log.Infof("tcp 写包 msg=%+V", msg)
-		l.WriteMsgToClient(msg)
+		go l.WriteMsgToClient(msg)
 	}
 }
 
@@ -148,7 +148,7 @@ func (l *UdpListener) rdpMakeTcpPackageSendBackend() {
 		log.Infof("udp package msg= %+v", msg)
 		seq := strconv.Itoa(msg.Seq)
 		if msg.Count <= 1 {
-			l.WriteMsgToRdp(msg.Data)
+			go l.WriteMsgToRdp(msg.Data)
 			continue
 		}
 		status, err := cache.Get(cache_key_package + seq)
@@ -177,7 +177,7 @@ func (l *UdpListener) rdpMakeTcpPackageSendBackend() {
 		cache.SetWithExpire(cache_key+seq, pg, 30*time.Second)
 		if len(m) == msg.Count {
 			//拼够包了
-			l.WriteMsgToRdp(pg)
+			go l.WriteMsgToRdp(pg)
 			continue
 		}
 	}
