@@ -40,49 +40,65 @@ func (l *UdpListener) RdpHandler() {
 			fmt.Println("accept failed, err:", err)
 			continue
 		}
-		go l.rdpProcessTrace(l.RdpConn)
+		go l.rdpProcessTrace()
 	}
 }
 
-func (l *UdpListener) rdpProcessTrace(rdpConn net.Conn) {
-	//data := make([]byte, 6000)
-	var data []byte
-	reader := bufio.NewReader(rdpConn)
-
-	n, err := reader.Read(data[:])
-	tcpPackage := data[:n]
-	log.Infof("n=%d , err=%v,data=%v", n, err, tcpPackage)
-	if err != nil {
-		log.Errorf("error during read: %s", err.Error())
-	} else {
-		//msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
-		//转发到远程client
-		//l.WriteMsgToClient(msg)
-		l.rdpMakeUdpPackageSend(tcpPackage)
-	}
-}
-
-func (l *UdpListener) rdpClientProcess() {
-	var err error
-	//初始化udp client
-	l.RdpConn, err = net.DialTimeout("tcp", l.Conf.RemoteRdpAddr, 5*time.Second)
-	if err != nil {
-		log.Fatalf("init rdp client faild err=%s", err.Error())
-	}
+func (l *UdpListener) rdpProcessTrace() {
+	data := make([]byte, common.PACKAGE_SIZE)
+	//var data []byte
+	reader := bufio.NewReader(l.RdpConn)
 	for {
-		//data := make([]byte, 6000)
-		var data []byte
-		n, err := l.RdpConn.Read(data[:])
+		//l.RdpConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := reader.Read(data[:])
+		tcpPackage := data[:n]
 		if err == io.EOF {
-			return
+			l.RdpConn.Close()
+			break
 		}
 		if err != nil {
-			log.Fatalf("error during read: %s", err.Error())
+			log.Errorf("error during read: %s", err.Error())
+			break
 		} else {
 			//msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
 			//转发到远程client
 			//l.WriteMsgToClient(msg)
-			l.rdpMakeUdpPackageSend(data[:n])
+			go l.rdpMakeUdpPackageSend(tcpPackage)
+		}
+	}
+
+}
+
+func (l *UdpListener) rdpClientProcess() {
+	var err error
+	for {
+		//初始化udp client
+		l.RdpConn, err = net.DialTimeout("tcp", l.Conf.RemoteRdpAddr, 5*time.Second)
+		if err != nil {
+			log.Fatalf("init rdp client faild err=%s", err.Error())
+		}
+		l.rdpClientReadProcess()
+	}
+}
+
+func (l *UdpListener) rdpClientReadProcess() {
+	for {
+		data := make([]byte, common.PACKAGE_SIZE)
+		//var data []byte
+		n, err := l.RdpConn.Read(data[:])
+		if err == io.EOF {
+			continue
+		}
+		if err != nil {
+			log.Errorf("error during read: %s", err.Error())
+			l.RdpConn.Close()
+			return
+		} else {
+			//msg, _ := json.Marshal(&common.UDPMsg{Code: 2, Data: data[:n]})
+			//转发到远程client
+			//l.WriteMsgToClient(msg)
+			recv := data[:n]
+			go l.rdpMakeUdpPackageSend(recv)
 		}
 	}
 }
@@ -93,6 +109,12 @@ func (l *UdpListener) rdpMakeUdpPackageSend(data []byte) {
 	seq := rand.Intn(100000)
 	packageLen := len(data)
 	page := int(math.Ceil(float64(packageLen) / float64(common.PACKAGE_SIZE)))
+	log.Infof("seq=%d packagelen=%d page=%d", seq, packageLen, page)
+	//if packageLen == 0 {
+	//	msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: data, Seq: seq, Offset: 1, Count: page, Lenth: packageLen})
+	//	l.WriteMsgToClient(msg)
+	//	return
+	//}
 	for i := 1; i <= page; i++ {
 		sliceStart := (i - 1) * common.PACKAGE_SIZE
 		sliceEnd := sliceStart + common.PACKAGE_SIZE
@@ -100,7 +122,7 @@ func (l *UdpListener) rdpMakeUdpPackageSend(data []byte) {
 			sliceEnd = packageLen
 		}
 		msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: data[sliceStart:sliceEnd], Seq: seq, Offset: i, Count: page, Lenth: packageLen})
-		log.Infof("tcp 写包 msg=%+V", msg)
+		//log.Infof("tcp 写包 msg=%+V", msg)
 		l.WriteMsgToClient(msg)
 	}
 }
@@ -125,7 +147,7 @@ func (l *UdpListener) rdpMakeTcpPackageSendBackend() {
 		msg := <-packageChan
 		log.Infof("udp package msg= %+v", msg)
 		seq := strconv.Itoa(msg.Seq)
-		if msg.Count == 1 {
+		if msg.Count <= 1 {
 			l.WriteMsgToRdp(msg.Data)
 			continue
 		}
