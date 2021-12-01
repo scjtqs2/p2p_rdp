@@ -2,16 +2,12 @@ package main
 
 import (
 	"flag"
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"github.com/scjtqs2/p2p_rdp/client/app"
 	"github.com/scjtqs2/p2p_rdp/client/config"
 	"github.com/scjtqs2/utils/util"
 	log "github.com/sirupsen/logrus"
-	easy "github.com/t-tomalak/logrus-easy-formatter"
 	"os"
 	"os/signal"
-	"path"
-	"time"
 )
 
 var (
@@ -28,21 +24,13 @@ func init() {
 	flag.BoolVar(&h, "h", false, "this help")
 	flag.StringVar(&configPath, "c", "config.yml", "config file path default is config.yml")
 	flag.Parse()
-	logFormatter := &easy.Formatter{
-		TimestampFormat: "2006-01-02 15:04:05",
-		LogFormat:       "[%time%] [%lvl%]: %msg% \n",
-	}
-	w, err := rotatelogs.New(path.Join("logs", "%Y-%m-%d.log"), rotatelogs.WithRotationTime(time.Hour*24))
-	if err != nil {
-		log.Errorf("rotatelogs init err: %v", err)
-		panic(err)
-	}
-	LogLevel := "info"
+	LogLevel := log.InfoLevel
 	if debug {
 		log.SetReportCaller(true)
-		LogLevel = "debug"
+		LogLevel = log.DebugLevel
 	}
-	log.AddHook(util.NewLocalHook(w, logFormatter, util.GetLogLevel(LogLevel)...))
+	log.SetFormatter(&log.JSONFormatter{TimestampFormat: "2006-01-02 15:04:05"}) //使用json的格式
+	log.SetLevel(LogLevel)
 }
 
 func main() {

@@ -38,7 +38,7 @@ func defaultConf() *ClientConfig {
 		AppName:       "rdp-p2p",
 		RdpP2pPort:    30122,
 		ClientPort:    30123,
-		RemoteRdpAddr: "127.0.0.1：3389",
+		RemoteRdpAddr: "127.0.0.1:3389",
 	}
 }
 

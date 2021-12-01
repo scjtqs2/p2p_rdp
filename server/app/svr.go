@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"github.com/bluele/gcache"
 	"github.com/robfig/cron/v3"
 	"github.com/scjtqs2/p2p_rdp/common"
 	"github.com/scjtqs2/p2p_rdp/server/config"
@@ -18,6 +19,7 @@ type UdpListener struct {
 	Conn  *net.UDPConn
 	peers Peers
 	Cron  *cron.Cron
+	Cache gcache.Cache
 }
 
 type Peers struct {
@@ -33,6 +35,7 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 		log.Errorf("监听udp失败 host=%s:%d ,err=%s", config.Host, config.Port, err.Error())
 		return err
 	}
+	l.Cache = gcache.New(200).LRU().Build()
 	log.Printf("本地地址: <%s> \n", l.Conn.LocalAddr().String())
 	l.peers = Peers{
 		peers: make(map[string]*common.Peer),
@@ -47,12 +50,17 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 				continue
 			}
 			log.Printf("<%s> %s\n", remoteAddr.String(), data[:n])
-			var msg common.Req
+			var msg common.Msg
 			err = json.Unmarshal(data[:n], &msg)
 			if err != nil {
 				log.Errorf("错误的udp包 remoteAdd=%s err=%s", remoteAddr.String(), err.Error())
 				continue
 			}
+			l.returnSeq(msg.Seq, remoteAddr)
+			if l.checkSeq(msg.Seq) {
+				continue
+			}
+			l.setSeq(msg.Seq)
 			switch msg.Type {
 			case common.CLIENT_SERVER_TYPE:
 				log.Infof("server type of client req addr:%s", remoteAddr.String())
@@ -71,7 +79,7 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 }
 
 //progressClientClient 处理客户侧的客户端请求
-func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
+func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg) {
 	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
 	//查找server侧的客户端地址并返回
 	if l.PeersGet(req.AppName).Server.Addr == "" {
@@ -117,7 +125,7 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Req) {
 }
 
 // 处理服务侧的客户端请求
-func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Req) {
+func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg) {
 	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
 	//查找client侧的客户端是否有地址
 	peers := l.PeersGet(req.AppName)
