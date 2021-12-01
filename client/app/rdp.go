@@ -50,8 +50,8 @@ func (l *UdpListener) rdpProcessTrace(rdpConn net.Conn) {
 	reader := bufio.NewReader(rdpConn)
 
 	n, err := reader.Read(data[:])
-	tcpPackage:=data[:n]
-	log.Infof("n=%d , err=%v,data=%v",n,err,tcpPackage)
+	tcpPackage := data[:n]
+	log.Infof("n=%d , err=%v,data=%v", n, err, tcpPackage)
 	if err != nil {
 		log.Errorf("error during read: %s", err.Error())
 	} else {
@@ -65,7 +65,7 @@ func (l *UdpListener) rdpProcessTrace(rdpConn net.Conn) {
 func (l *UdpListener) rdpClientProcess() {
 	var err error
 	//初始化udp client
-	l.RdpConn, err = net.DialTimeout("tcp", "127.0.0.1:3389", 5*time.Second)
+	l.RdpConn, err = net.DialTimeout("tcp", l.Conf.RemoteRdpAddr, 5*time.Second)
 	if err != nil {
 		log.Fatalf("init rdp client faild err=%s", err.Error())
 	}

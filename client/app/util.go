@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"strconv"
@@ -24,7 +25,11 @@ func (l *UdpListener) WriteMsgBylconn(add *net.UDPAddr, msg []byte) {
 // WriteMsgToSvr 手动发包给svr的p2p服务端
 func (l *UdpListener) WriteMsgToSvr(msg []byte) {
 	i := 0
-	dstAddr := &net.UDPAddr{IP: net.ParseIP(l.Conf.ServerHost), Port: l.Conf.ServerPort}
+	//dstAddr := &net.UDPAddr{IP: net.ParseIP(l.Conf.ServerHost), Port: l.Conf.ServerPort}
+	dstAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", l.Conf.ServerHost, l.Conf.ServerPort))
+	if err != nil {
+		log.Fatalf("解析svc的地址失败,err=%s", err.Error())
+	}
 	for i < 3 {
 		_, err := l.LocalConn.WriteToUDP(msg, dstAddr)
 		if err == nil {
@@ -68,7 +73,7 @@ func parseAddr(addr string) *net.UDPAddr {
 
 // 有效期30秒
 func (l *UdpListener) checkStatus() bool {
-	if !l.Status.Status || l.Status.Time.UnixNano() < (time.Now().UnixNano() - 30*time.Second.Nanoseconds()) {
+	if !l.Status.Status || l.Status.Time.UnixNano() < (time.Now().UnixNano()-30*time.Second.Nanoseconds()) {
 		return false
 	}
 	return true
