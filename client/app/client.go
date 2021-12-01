@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+const PROTO_TCP = "tcp"
+const PROTO_UDP = "udp"
+
+type listenStatus struct {
+	Proto string
+}
+
+var listenStatusChan = make(chan listenStatus, 10)
+
 // 打洞
 func (l *UdpListener) bidirectionHole() {
 	if l.checkStatus() {
@@ -40,7 +49,7 @@ func (l *UdpListener) initMsgToSvc() {
 // 本地udp端口 消息读取处理
 func (l *UdpListener) localReadHandle() {
 	for {
-		data := make([]byte, 6000)
+		data := make([]byte, common.PACKAGE_SIZE)
 		n, remodeAddr, err := l.LocalConn.ReadFromUDP(data)
 		if err != nil {
 			log.Errorf("read udp package from svc faild,error %s", err.Error())
@@ -58,6 +67,7 @@ func (l *UdpListener) localReadHandle() {
 			log.Infof("心跳包 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
 			l.Status.Status = true
 			l.Status.Time = time.Now()
+			l.StatusTcp = true
 			continue
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
 			log.Infof("打洞消息 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
@@ -69,10 +79,14 @@ func (l *UdpListener) localReadHandle() {
 			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功")})
 			//l.WriteMsgBylconn(remodeAddr, message)
 			l.WriteMsgToClient(message)
+			//结束udp接口监听。转成tcp监听
+			//l.Proto.Proto = PROTO_TCP
+			//listenStatusChan <- l.Proto
+			l.StatusTcp = true
 		case common.UDP_TYPE_TRANCE:
 			//用rdp的端口发送数据
 			//需要提取udp的包进行拼包，再转发给tcp的rdp端口
-			l.rdpMakeTcpPackageSend(msg)
+			//l.rdpMakeTcpPackageSend(msg)
 			//l.WriteMsgToRdp(msg.Data)
 		case common.UDP_TYPE_DISCOVERY:
 			//处理和svr之间的通信

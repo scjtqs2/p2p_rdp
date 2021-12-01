@@ -40,7 +40,7 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 	}
 	go func() {
 		for {
-			data := make([]byte, 1024)
+			data := make([]byte, common.PACKAGE_SIZE)
 			n, remoteAddr, err := l.Conn.ReadFromUDP(data)
 			if err != nil {
 				log.Errorf("error during read: %s", err)
