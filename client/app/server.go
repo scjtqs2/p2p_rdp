@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"github.com/bluele/gcache"
 	"github.com/robfig/cron/v3"
+	"github.com/scjtqs2/kcp-go/v5"
 	"github.com/scjtqs2/p2p_rdp/client/config"
 	"github.com/scjtqs2/p2p_rdp/common"
 	"net"
@@ -13,13 +15,16 @@ import (
 type UdpListener struct {
 	Conf           *config.ClientConfig //本地配置信息
 	LocalConn      *net.UDPConn         //本地监听conn
+	ClientConn     *net.UDPConn         //本地监听conn
 	ClientServerIp common.Ip            //server侧的客户端的地址
-	Status         *Status              //server侧的连接情况
-	RdpConn        net.Conn             //rdp的3389端口转发
-	RdpListener    net.Listener         //rdp的3389端口转发
+	KcpListener    *kcp.Listener        //server侧的kcp listener
+	RdpListener    *net.TCPListener     //rdp的3389端口转发
 	RdpAddr        string               //rdp客户端地址
 	Cron           *cron.Cron
 	Cache          gcache.Cache
+	Client2        *kcp.UDPSession // 通过 ClientConn连接 p2p
+	clientIpChange chan string
+	p2pChan        chan bool
 }
 
 type Status struct {
@@ -27,25 +32,34 @@ type Status struct {
 	Time   time.Time
 }
 
-func (l *UdpListener) Run(ctx context.Context,config *config.ClientConfig) (err error) {
+func (l *UdpListener) Run(ctx context.Context, config *config.ClientConfig) (err error) {
 	l.Conf = config
-	l.Status = &Status{
-		Status: false,
-	}
+	l.ClientServerIp = common.Ip{Addr: ""}
 	l.Cache = gcache.New(200).LRU().Expiration(10 * time.Second).Build()
-	//单独协程 udp 发包
-	go l.udpSendBackend(ctx)
+	l.clientIpChange = make(chan string, 10)
+	l.p2pChan = make(chan bool, 128)
 	//固定本地端口的监听
-	l.LocalConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort})
-	//处理打洞请求的回包 udp的读取协程
-	go l.localReadHandle(ctx)
-	//发送初始消息到svc
-	l.initMsgToSvc(ctx)
+	l.LocalConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPortFroSvc})
+	if err != nil {
+		panic(err)
+	}
+	l.ClientConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPortForP2PTrance})
+	if err != nil {
+		panic(err)
+	}
+	l.Client2, err = NewKcpConnWithUDPConn(l.ClientConn, fmt.Sprintf("%s:%d", l.Conf.ServerHost, l.Conf.ServerPort))
+	if err != nil {
+		panic(err)
+	}
+	l.initListener(ctx)
+	// 监听svc发送过来的数据
+	go l.handleUdpLocal(ctx, l.LocalConn)
+	l.ReportToSvc(ctx)
+	l.getIpFromSvr(ctx)
 
-	//初始化rdp的本地监听
-	l.initRdpListener(ctx)
-	//l.initRdpUdpListen()
-	//发送心跳包维活
+	go l.localRdpClientListener(ctx)
+	go l.sendP2PBackend(l.ClientConn)
+
 	l.startCron(ctx)
 	return nil
 }

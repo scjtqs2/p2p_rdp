@@ -29,7 +29,7 @@ type Peer struct {
 }
 
 type UDPMsg struct {
-	Code   int64        //0:心跳 1:打洞消息 2:转发消息 3:和svc之间的通信
+	Code   int        //0:心跳 1:打洞消息 2:转发消息 3:和svc之间的通信
 	Data   []byte       //转发/携带 的数据
 	Seq    string       //包标记
 	Count  int          //当前标记的总包数量

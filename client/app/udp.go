@@ -5,31 +5,14 @@ import (
 	"encoding/json"
 	"github.com/scjtqs2/p2p_rdp/common"
 	log "github.com/sirupsen/logrus"
-	"time"
+	"net"
 )
 
-// 发送信息给svc
-func (l *UdpListener) initMsgToSvc(ctx context.Context) {
-	log.Infof("发送消息给svc，addr=%s:%d", l.Conf.ServerHost, l.Conf.ServerPort)
-	req := &common.Msg{AppName: l.Conf.AppName}
-	switch l.Conf.Type {
-	case common.CLIENT_SERVER_TYPE:
-		req.Type = common.CLIENT_SERVER_TYPE
-	case common.CLIENT_CLIENT_TYPE:
-		req.Type = common.CLIENT_CLIENT_TYPE
-	}
-	seq := makeSeq()
-	req.Seq = seq
-	req.AppName = l.Conf.AppName
-	msg, _ := json.Marshal(req)
-	go l.WriteMsgToSvr(msg, seq)
-}
-
-// 本地udp端口 消息读取处理
-func (l *UdpListener) localReadHandle(contx context.Context) {
+func (l *UdpListener) handleUdpLocal(contx context.Context, conn *net.UDPConn) {
+	defer conn.Close()
 	for {
 		data := make([]byte, common.PACKAGE_SIZE)
-		n, remodeAddr, err := l.LocalConn.ReadFromUDP(data[:])
+		n, _, err := conn.ReadFromUDP(data)
 		if err != nil {
 			log.Errorf("read udp package from svc faild,error %s", err.Error())
 			continue
@@ -37,54 +20,32 @@ func (l *UdpListener) localReadHandle(contx context.Context) {
 		var msg common.UDPMsg
 		err = json.Unmarshal(data[:n], &msg)
 		if err != nil {
+			log.Error("json parase err:%s", err.Error())
 			continue
 		}
 		ctx := context.WithValue(contx, "seq", msg.Seq)
-		log.WithContext(ctx)
-		if msg.Seq != "" && msg.Code != common.UDP_TYPE_SEQ_RESPONSE {
-			go l.returnSeq(msg.Seq, remodeAddr)
-		}
-		//if l.checkSeq(msg.Seq) {
-		//	continue
-		//}
-		//l.setSeq(msg.Seq)
-		//0:心跳 1:打洞消息 2:转发消息
 		switch msg.Code {
-		case common.UDP_TYPE_KEEP_ALIVE:
-			log.Infof("心跳包 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
-			l.Status.Status = true
-			l.Status.Time = time.Now()
-			continue
-		case common.UDP_TYPE_BI_DIRECTION_HOLE:
-			log.Infof("打洞消息 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
-			l.Status.Status = true
-			l.Status.Time = time.Now()
-			seq := makeSeq()
-			message, _ := json.Marshal(&common.UDPMsg{Code: 0, Data: []byte("打洞成功"), Seq: seq})
-			go l.WriteMsgToClient(ctx, message, seq)
-		case common.UDP_TYPE_TRANCE:
-			//用rdp的端口发送数据
-			recv := msg.Data
-			//需要提取udp的包进行拼包，再转发给tcp的rdp端口
-			//l.rdpMakeTcpPackageSend(common.UDPMsg{
-			//	Code:   msg.Code,
-			//	Data:   recv,
-			//	Seq:    msg.Seq,
-			//	Count:  msg.Count,
-			//	Offset: msg.Offset,
-			//	Lenth:  msg.Lenth,
-			//})
-			log.Debugf("tcp trance n=%d,err=%v,data=%v", n, err, recv)
-			go l.WriteMsgToRdp(ctx, recv)
-		case common.UDP_TYPE_DISCOVERY:
+		case common.UDP_TYPE_DISCOVERY: //正常拿到 clientip
 			//处理和svr之间的通信
 			var svcmsg common.Msg
 			json.Unmarshal(msg.Data, &svcmsg)
+			log.Debugf("从svc拿到数据 msg:%+v", svcmsg)
 			l.progressSvc(ctx, svcmsg)
-		case common.UDP_TYPE_RDP:
-			go l.rdpUdpWrite(ctx, msg.Data, msg.Addr)
-		case common.UDP_TYPE_SEQ_RESPONSE:
-			log.Debugf("seq res,seq:%s", msg.Seq)
+		case common.UDP_TYPE_DISCOVERY_FROCE_P2P: //强制触发p2p打洞
+			var svcmsg common.Msg
+			json.Unmarshal(msg.Data, &svcmsg)
+			var clientIp common.Ip
+			err := json.Unmarshal([]byte(svcmsg.Res.Message), &clientIp)
+			if err != nil {
+				log.Errorf("MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS 解码json失败 err %s", err.Error())
+			}
+			log.Infof("svc 强推消息 msg:%+v", svcmsg)
+			l.ClientServerIp = clientIp
+			l.makeP2P()
+			//ip变更了 TODO
+			if clientIp.Addr != l.ClientServerIp.Addr && l.Conf.Type == common.CLIENT_CLIENT_TYPE {
+				l.writeClientIpChange(clientIp.Addr)
+			}
 		}
 	}
 }
@@ -96,20 +57,71 @@ func (l *UdpListener) progressSvc(ctx context.Context, msg common.Msg) {
 			log.Errorf("对方客户端未就绪,%+v", msg.Res)
 			return
 		}
-		err := json.Unmarshal([]byte(msg.Res.Message), &l.ClientServerIp)
+		var clientIp common.Ip
+		err := json.Unmarshal([]byte(msg.Res.Message), &clientIp)
 		if err != nil {
 			log.Errorf("MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS 解码json失败 err %s", err.Error())
 		}
-		go l.writeToP2P(ctx)
+		//ip变更了 TODO
+		if clientIp.Addr != l.ClientServerIp.Addr {
+			l.ClientServerIp = clientIp
+			log.Infof("开始kcp 发送p2p包给 client侧")
+			l.makeP2P()
+			if l.Conf.Type == common.CLIENT_CLIENT_TYPE {
+				l.writeClientIpChange(clientIp.Addr)
+			}
+		} else {
+			l.ClientServerIp = clientIp
+		}
 	case common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS:
 		if msg.Res.Code != 0 {
 			log.Errorf("对方客户端未就绪,%+v", msg.Res)
 			return
 		}
-		err := json.Unmarshal([]byte(msg.Res.Message), &l.ClientServerIp)
+		var clientIp common.Ip
+		err := json.Unmarshal([]byte(msg.Res.Message), &clientIp)
 		if err != nil {
 			log.Errorf("MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS 解码json失败 err %s", err.Error())
 		}
-		go l.writeToP2P(ctx)
+		//ip变更了 TODO
+		if clientIp.Addr != l.ClientServerIp.Addr {
+			l.ClientServerIp = clientIp
+			log.Infof("开始kcp 发送p2p包给 server侧")
+			l.makeP2P()
+			if l.Conf.Type == common.CLIENT_CLIENT_TYPE {
+				l.writeClientIpChange(clientIp.Addr)
+			}
+		} else {
+			l.ClientServerIp = clientIp
+		}
+	}
+}
+
+//  发送p2p的打洞数据包
+func (l *UdpListener) makeP2P() {
+	l.p2pChan <- true
+}
+
+func (l *UdpListener) sendP2PBackend(conn *net.UDPConn) {
+	for {
+		select {
+		case <-l.p2pChan:
+			if l.ClientServerIp.Addr == "" {
+				log.Error("没有获取到另一侧的udp地址")
+				return
+			}
+			seq := makeSeq()
+			ctx := context.WithValue(context.TODO(), "seq", seq)
+			log.WithContext(ctx)
+			msg, _ := json.Marshal(&common.UDPMsg{
+				Code: common.UDP_TYPE_BI_DIRECTION_HOLE,
+				Data: []byte("我是打洞消息"),
+				Seq:  seq,
+			})
+			log.Infof("开始发送打洞消息 addr=%s", l.ClientServerIp.Addr)
+			dstAddr, _ := net.ResolveUDPAddr("udp", l.ClientServerIp.Addr)
+			conn.WriteToUDP(msg, dstAddr)
+			conn.WriteToUDP(msg, dstAddr)
+		}
 	}
 }

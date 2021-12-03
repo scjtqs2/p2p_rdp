@@ -16,7 +16,8 @@ func (l *UdpListener) startCron() {
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)))
 	//定时执行任务
-	l.Cron.AddFunc("* * * * *", l.clearPeers)
+	l.Cron.AddFunc("* * * * *", l.clearPeers)  // peers for rdp
+	l.Cron.AddFunc("* * * * *", l.clearPeers2) // peers for svc
 	l.Cron.Start()
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
@@ -56,4 +57,34 @@ func checkExpire(ip common.Ip) bool {
 		return false
 	}
 	return true
+}
+
+
+
+
+func (l *UdpListener) clearPeers2() {
+	//拉取keys
+	keys := l.Peers2Keys()
+	go func() {
+		for _, v := range keys {
+			appName := v
+			peers := l.Peers2Get(appName)
+			//校验server侧 并清理
+			if peers != nil && !checkExpire(peers.Server) {
+				peers.Server.Addr = ""
+				l.Peers2Set(appName, peers)
+			}
+			//校验client 并清理
+			go l.clearClientPeers2(appName)
+		}
+	}()
+}
+
+// 用来清理clients
+func (l *UdpListener) clearClientPeers2(appName string) {
+	peers := l.Peers2Get(appName)
+	if peers != nil && !checkExpire(peers.Client) {
+		peers.Client.Addr = ""
+	}
+	l.Peers2Set(appName, peers)
 }

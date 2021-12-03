@@ -1,216 +1,321 @@
 package app
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/pkg/errors"
 	"github.com/scjtqs2/p2p_rdp/common"
 	log "github.com/sirupsen/logrus"
+	"github.com/xtaci/kcptun/generic"
+	"github.com/xtaci/smux"
 	"io"
 	"net"
+	"time"
 )
 
-func (l *UdpListener) initRdpListener(ctx context.Context) {
+const (
+	ScaVengeTTL  = 600
+	AutoExpire   = 0
+	SmuxBuf      = 4194304
+	StreamBuf    = 2097152
+	KeepAlive    = 10
+	MTU          = 1350
+	SmuxVer      = 1
+	SndWnd       = 1024
+	RcvWnd       = 1024
+	DSCP         = 0
+	NoDelay      = 0
+	Interval     = 30
+	Resend       = 2
+	NoCongestion = 1
+	sockbuf      = 4194304
+	AckNodelay   = true
+	Quiet        = false
+)
+
+type timedSession struct {
+	session    *smux.Session
+	expiryDate time.Time
+}
+
+func (l *UdpListener) writeClientIpChange(ip string) {
+	l.clientIpChange <- ip
+}
+
+// handleClient aggregates connection p1 on mux with 'writeLock'
+func handleClient(session *smux.Session, p1 net.Conn, quiet bool) {
+	logln := func(v ...interface{}) {
+		if !quiet {
+			log.Println(v...)
+		}
+	}
+	defer p1.Close()
+	p2, err := session.OpenStream()
+	if err != nil {
+		logln(err)
+		return
+	}
+
+	defer p2.Close()
+
+	logln("stream opened", "in:", p1.RemoteAddr(), "out:", fmt.Sprint(p2.RemoteAddr(), "(", p2.ID(), ")"))
+	defer logln("stream closed", "in:", p1.RemoteAddr(), "out:", fmt.Sprint(p2.RemoteAddr(), "(", p2.ID(), ")"))
+
+	// start tunnel & wait for tunnel termination
+	streamCopy := func(dst io.Writer, src io.ReadCloser) {
+		if _, err := generic.Copy(dst, src); err != nil {
+			// report protocol error
+			if err == smux.ErrInvalidProtocol {
+				log.Println("smux", err, "in:", p1.RemoteAddr(), "out:", fmt.Sprint(p2.RemoteAddr(), "(", p2.ID(), ")"))
+			}
+		}
+		p1.Close()
+		p2.Close()
+	}
+
+	go streamCopy(p1, p2)
+	streamCopy(p2, p1)
+}
+
+func scavenger(ch chan timedSession) {
+	// When AutoExpire is set to 0 (default), sessionList will keep empty.
+	// Then this routine won't need to do anything; thus just terminate it.
+	if AutoExpire <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var sessionList []timedSession
+	for {
+		select {
+		case item := <-ch:
+			sessionList = append(sessionList, timedSession{
+				item.session,
+				item.expiryDate.Add(time.Duration(ScaVengeTTL) * time.Second)})
+		case <-ticker.C:
+			if len(sessionList) == 0 {
+				continue
+			}
+
+			var newList []timedSession
+			for k := range sessionList {
+				s := sessionList[k]
+				if s.session.IsClosed() {
+					log.Println("scavenger: session normally closed:", s.session.LocalAddr())
+				} else if time.Now().After(s.expiryDate) {
+					s.session.Close()
+					log.Println("scavenger: session closed due to ttl:", s.session.LocalAddr())
+				} else {
+					newList = append(newList, sessionList[k])
+				}
+			}
+			sessionList = newList
+		}
+	}
+}
+
+// server侧初始化 kcplistenser client侧初始化 tcplistener
+func (l *UdpListener) initListener(ctx context.Context) {
 	var err error
 	switch l.Conf.Type {
 	case common.CLIENT_CLIENT_TYPE:
 		//初始化listener
-		l.RdpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", l.Conf.RdpP2pPort))
+		localTcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("127.0.0.1:%d", l.Conf.RdpP2pPort))
+		l.RdpListener, err = net.ListenTCP("tcp", localTcpAddr)
 		if err != nil {
 			log.Fatalf("init rdp listener faild port=%d ,err=%s", l.Conf.RdpP2pPort, err.Error())
 		}
-		go l.RdpHandler()
 	case common.CLIENT_SERVER_TYPE:
-		go l.rdpClientProcess()
+		l.KcpListener, err = NewKcpServerWithUDPConn(l.ClientConn)
+		if err != nil {
+			log.Fatalf("init kcp listener faild err=%s", err.Error())
+		}
+		if err := l.KcpListener.SetDSCP(DSCP); err != nil {
+			log.Printf("SetDSCP:%s", err.Error())
+		}
+		if err := l.KcpListener.SetReadBuffer(sockbuf); err != nil {
+			log.Printf("SetReadBuffer:%s", err.Error())
+		}
+		if err := l.KcpListener.SetWriteBuffer(sockbuf); err != nil {
+			log.Printf("SetWriteBuffer:%s", err.Error())
+		}
 	}
 }
 
-func (l *UdpListener) RdpHandler() {
-	var err error
-	defer l.RdpListener.Close()
+func (l *UdpListener) localRdpClientListener(ctx context.Context) {
+	switch l.Conf.Type {
+	case common.CLIENT_CLIENT_TYPE:
+		for {
+			clientAddr := <-l.clientIpChange
+			log.Infof("更新clientip地址 addr=%s", clientAddr)
+			//rdpListener accept
+			go l.rdpClientLoop(clientAddr)
+		}
+	case common.CLIENT_SERVER_TYPE:
+		// server侧。不需要remote addr
+		for {
+			if conn, err := l.KcpListener.AcceptKCP(); err == nil {
+				log.Println("remote address:", conn.RemoteAddr())
+				conn.SetStreamMode(true)
+				conn.SetWriteDelay(false)
+				conn.SetMtu(MTU)
+				conn.SetNoDelay(NoDelay, Interval, Resend, NoCongestion)
+				conn.SetWindowSize(SndWnd, RcvWnd)
+				conn.SetACKNoDelay(AckNodelay)
+				go l.handleServerMux(generic.NewCompStream(conn))
+			} else {
+				log.Printf("%+v", err)
+			}
+		}
+	}
+}
+
+func (l *UdpListener) rdpClientLoop(clientAddr string) {
+	createConn := func() (*smux.Session, error) {
+		clientConn, err := NewKcpConnWithUDPConn(l.ClientConn, clientAddr)
+		if err != nil {
+			log.Fatalf("new kcp client faild err:%s", err.Error())
+			panic(err)
+		}
+		clientConn.SetStreamMode(true)
+		clientConn.SetWriteDelay(false)
+		clientConn.SetMtu(MTU)
+		clientConn.SetNoDelay(NoDelay, Interval, Resend, NoCongestion)
+		clientConn.SetWindowSize(SndWnd, RcvWnd)
+		clientConn.SetACKNoDelay(AckNodelay)
+		if err := clientConn.SetDSCP(DSCP); err != nil {
+			log.Printf("SetDscp:%s", err.Error())
+		}
+		if err := clientConn.SetReadBuffer(sockbuf); err != nil {
+			log.Printf("SetReadBuffer:%s", err.Error())
+		}
+		if err := clientConn.SetWriteBuffer(sockbuf); err != nil {
+			log.Printf("SetWriteBuffer:%s", err.Error())
+		}
+		log.Printf("smux version:%s on connection:%s -> %s", SmuxVer, clientConn.LocalAddr().String(), clientConn.RemoteAddr().String())
+		smuxConfig := smux.DefaultConfig()
+		smuxConfig.Version = SmuxVer
+		smuxConfig.MaxReceiveBuffer = SmuxBuf
+		smuxConfig.MaxStreamBuffer = StreamBuf
+		smuxConfig.KeepAliveInterval = time.Duration(KeepAlive) * time.Second
+		if err := smux.VerifyConfig(smuxConfig); err != nil {
+			log.Fatalf("%+v", err)
+		}
+		var session *smux.Session
+		session, err = smux.Client(generic.NewCompStream(clientConn), smuxConfig)
+		if err != nil {
+			log.Errorf("createConn faild.err=%s", err.Error())
+			return nil, errors.Wrap(err, "createConn()")
+		}
+		return session, nil
+	}
+	// wait until a connection is ready
+	waitConn := func() *smux.Session {
+		for {
+			if session, err := createConn(); err == nil {
+				log.Infof("kcp session created")
+				return session
+			} else {
+				log.Println("re-connecting:", err)
+				time.Sleep(time.Second)
+			}
+		}
+	}
+	// start scavenger
+	chScavenger := make(chan timedSession, 128)
+	go scavenger(chScavenger)
+	// start listener
+	numconn := uint16(1)
+	muxes := make([]timedSession, numconn)
+	rr := uint16(0)
 	for {
-		l.RdpConn, err = l.RdpListener.Accept()
+		rdpConn, err := l.RdpListener.AcceptTCP()
 		if err != nil {
 			fmt.Println("accept failed, err:", err)
 			continue
 		}
-		var closeChan = make(chan bool, 10)
-		go l.rdpSendBackend(l.RdpConn, RdpWriteChan, closeChan)
-		go l.rdpProcessTrace(l.RdpConn, closeChan)
-	}
-}
-
-func (l *UdpListener) rdpProcessTrace(conn net.Conn, closeChan chan bool) {
-	data := make([]byte, common.PACKAGE_SIZE)
-	defer conn.Close()
-	defer func() {
-		closeChan <- true
-	}()
-	//var data []byte
-	reader := bufio.NewReader(conn)
-	for {
-		n, err := reader.Read(data)
-		tcpPackage := data[:n]
-		if err == io.EOF {
-			return
-		}
-		if err != nil {
-			log.Errorf("error during read: %s", err.Error())
-			return
-		} else {
-			seq := makeSeq()
-			ctx := context.WithValue(context.TODO(), "seq", seq)
-			log.WithContext(ctx)
-			msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: tcpPackage, Seq: seq})
-			//转发到远程client
-			go l.WriteMsgToClient(ctx, msg, seq)
-		}
-	}
-
-}
-
-func (l *UdpListener) rdpClientProcess() {
-	var err error
-	for {
-		//初始化udp client
-		l.RdpConn, err = net.Dial("tcp", l.Conf.RemoteRdpAddr)
-		if err != nil {
-			log.Fatalf("init rdp client faild err=%s", err.Error())
-		}
-		var closeChan = make(chan bool, 10)
-		go l.rdpSendBackend(l.RdpConn, RdpWriteChan, closeChan)
-		l.rdpClientReadProcess()
-		closeChan <- true
-		l.RdpConn.Close()
-	}
-}
-
-func (l *UdpListener) rdpClientReadProcess() {
-	for {
-		data := make([]byte, common.PACKAGE_SIZE)
-		//var data []byte
-		n, err := l.RdpConn.Read(data[:])
-		if err == io.EOF {
-			return
-		}
-		if err != nil {
-			log.Errorf("error during read: %s", err.Error())
-			return
-		} else {
-			recv := data[:n]
-			seq := makeSeq()
-			ctx := context.WithValue(context.TODO(), "seq", seq)
-			log.WithContext(ctx)
-			msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_TRANCE, Data: recv, Seq: seq})
-			//转发到远程client
-			log.Printf("rdp client read n=%d", n)
-			go l.WriteMsgToClient(ctx, msg, seq)
-		}
-	}
-}
-
-func (l *UdpListener) initRdpUdpListen() {
-	var err error
-	var rdpUdpConn *net.UDPConn
-	switch l.Conf.Type {
-	case common.CLIENT_CLIENT_TYPE:
-		//初始化listener
-		rdpUdpConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: l.Conf.RdpP2pPort})
-		if err != nil {
-			log.Fatalf("init rdp listener faild port=%d ,err=%s", l.Conf.RdpP2pPort, err.Error())
-		}
-		go l.rdpUdpHandler(rdpUdpConn)
-		//写数据
-		go func(socket *net.UDPConn, RdpUdpWriteChan chan UdpWrite) {
-			for {
-				msg := <-RdpUdpWriteChan
-				socket.WriteToUDP(msg.Data, msg.Addr)
+		log.Printf("tcp conn started")
+		idx := rr % numconn
+		// do auto expiration && reconnection
+		if muxes[idx].session == nil || muxes[idx].session.IsClosed() ||
+			(AutoExpire > 0 && time.Now().After(muxes[idx].expiryDate)) {
+			log.Printf("kcp conn start")
+			muxes[idx].session = waitConn()
+			muxes[idx].expiryDate = time.Now().Add(time.Duration(AutoExpire) * time.Second)
+			if AutoExpire > 0 { // only when autoexpire set
+				chScavenger <- muxes[idx]
 			}
-		}(rdpUdpConn, RdpUdpWriteChan)
-	case common.CLIENT_SERVER_TYPE:
-		go l.rdpUdpDiaHandler()
-	}
-}
-
-var rdpClientAddr *net.UDPAddr
-
-// client侧读取rdp数据，发送给server侧
-func (l *UdpListener) rdpUdpHandler(conn *net.UDPConn) {
-	defer conn.Close()
-	for {
-		data := make([]byte, common.PACKAGE_SIZE)
-		n, addr, err := conn.ReadFromUDP(data[:])
-		rdpClientAddr = addr
-		if err != nil {
-			log.Errorf("read udp package from rdp faild,addr=%s ,error %s", addr, err.Error())
-			continue
 		}
-		recv := data[:n]
-		seq := makeSeq()
-		ctx := context.WithValue(context.TODO(), "seq", seq)
-		log.WithContext(ctx)
-		msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_RDP, Data: recv, Seq: seq})
-		//转发到远程client
-		go l.WriteMsgToClient(ctx, msg, seq)
+		log.Printf("kcp conn started")
+		go handleClient(muxes[idx].session, rdpConn, Quiet)
+		rr++
 	}
 }
 
-var RdpUdpWriteChan = make(chan UdpWrite, 10)
+// handle multiplex-ed connection
+func (l *UdpListener) handleServerMux(conn net.Conn) {
+	log.Println("smux version:", SmuxVer, "on connection:", conn.LocalAddr(), `->`, conn.RemoteAddr())
+	// stream multiplex
+	smuxConfig := smux.DefaultConfig()
+	smuxConfig.Version = SmuxVer
+	smuxConfig.MaxReceiveBuffer = SmuxBuf
+	smuxConfig.MaxStreamBuffer = StreamBuf
+	smuxConfig.KeepAliveInterval = time.Duration(KeepAlive) * time.Second
 
-// 3389的udp直通 写入
-func (l *UdpListener) rdpUdpWrite(ctx context.Context, data []byte, addr *net.UDPAddr) {
-	defer ctx.Done()
-	m := UdpWrite{
-		Addr: addr,
-		Data: data,
+	mux, err := smux.Server(conn, smuxConfig)
+	if err != nil {
+		log.Println(err)
+		return
 	}
-	RdpUdpWriteChan <- m
-}
+	defer mux.Close()
 
-// server侧的 rdp udp 读取 转发到client侧
-func (l *UdpListener) rdpUdpDiaHandler() {
 	for {
-		dst, _ := net.ResolveUDPAddr("udp", l.Conf.RemoteRdpAddr)
-		socket, err := net.DialUDP("udp", nil, dst)
+		stream, err := mux.AcceptStream()
 		if err != nil {
-			log.Errorf("连接 rdp udp失败 err:%s", err.Error())
+			log.Println(err)
+			return
 		}
-		//写数据
-		var closeChan = make(chan bool, 10)
-		go func(socket *net.UDPConn, RdpUdpWriteChan chan UdpWrite, closeChan chan bool) {
-			for {
-				select {
-				case <-closeChan:
-					close(closeChan)
-					return
-				case msg := <-RdpUdpWriteChan:
-					_, err := socket.Write(msg.Data)
-					if err != nil {
-						log.Errorf("tcp write faild err : %s", err.Error())
-						RdpUdpWriteChan <- msg
-					}
-				}
-			}
-		}(socket, RdpUdpWriteChan, closeChan)
-		//度数据
-		for {
-			data := make([]byte, common.PACKAGE_SIZE)
-			n, addr, err := socket.ReadFromUDP(data[:])
+
+		go func(p1 *smux.Stream) {
+			var p2 net.Conn
+			var err error
+			p2, err = net.Dial("tcp", l.Conf.RemoteRdpAddr)
+
 			if err != nil {
-				log.Errorf("read udp package from rdp server faild,error %s", err.Error())
-				break
+				log.Println(err)
+				p1.Close()
+				return
 			}
-			recv := data[:n]
-			seq := makeSeq()
-			ctx := context.WithValue(context.TODO(), "seq", seq)
-			log.WithContext(ctx)
-			msg, _ := json.Marshal(&common.UDPMsg{Code: common.UDP_TYPE_RDP, Data: recv, Addr: addr, Seq: seq})
-			//转发到远程client
-			go l.WriteMsgToClient(ctx, msg, seq)
+			handleServer(p1, p2, Quiet)
+		}(stream)
+	}
+}
+
+func handleServer(p1 *smux.Stream, p2 net.Conn, quiet bool) {
+	logln := func(v ...interface{}) {
+		if !quiet {
+			log.Println(v...)
 		}
-		closeChan <- true
-		socket.Close()
 	}
 
+	defer p1.Close()
+	defer p2.Close()
+
+	logln("stream opened", "in:", fmt.Sprint(p1.RemoteAddr(), "(", p1.ID(), ")"), "out:", p2.RemoteAddr())
+	defer logln("stream closed", "in:", fmt.Sprint(p1.RemoteAddr(), "(", p1.ID(), ")"), "out:", p2.RemoteAddr())
+
+	// start tunnel & wait for tunnel termination
+	streamCopy := func(dst io.Writer, src io.ReadCloser) {
+		if _, err := generic.Copy(dst, src); err != nil {
+			if err == smux.ErrInvalidProtocol {
+				log.Println("smux", err, "in:", fmt.Sprint(p1.RemoteAddr(), "(", p1.ID(), ")"), "out:", p2.RemoteAddr())
+			}
+		}
+		p1.Close()
+		p2.Close()
+	}
+
+	go streamCopy(p2, p1)
+	streamCopy(p1, p2)
 }

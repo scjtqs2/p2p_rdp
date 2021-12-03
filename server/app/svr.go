@@ -2,24 +2,21 @@ package app
 
 import (
 	"encoding/json"
-	"github.com/bluele/gcache"
 	"github.com/robfig/cron/v3"
 	"github.com/scjtqs2/p2p_rdp/common"
 	"github.com/scjtqs2/p2p_rdp/server/config"
 	log "github.com/sirupsen/logrus"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
 
 type UdpListener struct {
-	Port  int
-	Conn  *net.UDPConn
-	peers Peers
-	Cron  *cron.Cron
-	Cache gcache.Cache
+	Port              int
+	peers             Peers //专门用于rdp转发的p2p端口的地址
+	peersForSvcTrance Peers //专门用于和svc通信的p2p端口的地址
+	Cron              *cron.Cron
+	ch                chan UdpSend
 }
 
 type Peers struct {
@@ -29,61 +26,75 @@ type Peers struct {
 
 //Run 启动脚本
 func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
-	l.Conn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.Port})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.Port})
 	l.Port = config.Port
 	if err != nil {
 		log.Errorf("监听udp失败 host=%s:%d ,err=%s", config.Host, config.Port, err.Error())
 		return err
 	}
-	l.Cache = gcache.New(200).LRU().Build()
-	log.Printf("本地地址: <%s> \n", l.Conn.LocalAddr().String())
+	go l.sendBackend(conn)
+	l.ch = make(chan UdpSend, 128)
+	log.Printf("本地地址: <0.0.0.0:%d> ", l.Port)
 	l.peers = Peers{
 		peers: make(map[string]*common.Peer),
 		Mu:    &sync.RWMutex{},
 	}
-	go func() {
+	l.peersForSvcTrance = Peers{
+		peers: make(map[string]*common.Peer),
+		Mu:    &sync.RWMutex{},
+	}
+	go func(conn *net.UDPConn) {
+		defer conn.Close()
 		for {
-			data := make([]byte, 1024)
-			n, remoteAddr, err := l.Conn.ReadFromUDP(data)
+			data := make([]byte, common.PACKAGE_SIZE)
+			n, remoteAddr, err := conn.ReadFromUDP(data)
 			if err != nil {
-				log.Errorf("error during read: %s", err)
+				log.Errorf("read udp package from client faild,error %s", err.Error())
 				continue
 			}
-			log.Printf("<%s> %s\n", remoteAddr.String(), data[:n])
-			var msg common.Msg
-			err = json.Unmarshal(data[:n], &msg)
+			//log.Printf("<%s> %s\n", remoteAddr, data[:n])
+			var udpMsg common.UDPMsg
+			err = json.Unmarshal(data[:n], &udpMsg)
 			if err != nil {
-				log.Errorf("错误的udp包 remoteAdd=%s err=%s", remoteAddr.String(), err.Error())
+				log.Errorf("错误的udp包 remoteAdd=%s err=%s", remoteAddr, err.Error())
 				continue
 			}
-			l.returnSeq(msg.Seq, remoteAddr)
-			if l.checkSeq(msg.Seq) {
-				continue
-			}
-			l.setSeq(msg.Seq)
-			switch msg.Type {
-			case common.CLIENT_SERVER_TYPE:
-				log.Infof("server type of client req addr:%s", remoteAddr.String())
-				l.progressServerClient(remoteAddr, msg)
-			case common.CLIENT_CLIENT_TYPE:
-				log.Infof("client type of client req addr:%s", remoteAddr.String())
-				l.progressClientClient(remoteAddr, msg)
-			default:
-				log.Errorf("error type of udp req")
-				continue
+			switch udpMsg.Code {
+			case common.UDP_TYPE_REPORT:
+				l.progressReport(udpMsg, remoteAddr)
+			case common.UDP_TYPE_GET_CLIENT_IP:
+				var msg common.Msg
+				json.Unmarshal(udpMsg.Data, &msg)
+				switch msg.Type {
+				case common.CLIENT_SERVER_TYPE:
+					log.Infof("group %s server type of client req addr:%s", msg.AppName, remoteAddr)
+					go l.progressServerClient(remoteAddr, msg, conn)
+				case common.CLIENT_CLIENT_TYPE:
+					log.Infof("group %s client type of client req addr:%s", msg.AppName, remoteAddr)
+					go l.progressClientClient(remoteAddr, msg, conn)
+				default:
+					log.Errorf("error type of udp req")
+					continue
+				}
 			}
 		}
-	}()
+	}(conn)
 	l.startCron()
 	return nil
 }
 
+func (l *UdpListener) progressReport(req common.UDPMsg, add net.Addr) {
+	var msg common.Msg
+	json.Unmarshal(req.Data, &msg)
+	l.checkipInListAndUpdateTime(add.String(), msg.AppName, msg.Type)
+}
+
 //progressClientClient 处理客户侧的客户端请求
-func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg) {
-	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
+func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg, conn *net.UDPConn) {
+	check := l.checkipInListAndUpdateTimeFroSvc(add.String(), req.AppName, req.Type)
 	//查找server侧的客户端地址并返回
-	if l.PeersGet(req.AppName).Server.Addr == "" {
-		msg, _ := json.Marshal(common.Msg{
+	if l.PeersGet(req.AppName) == nil || l.PeersGet(req.AppName).Server.Addr == "" {
+		msg, _ := json.Marshal(&common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
 			Res: common.Res{
@@ -91,8 +102,13 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg) {
 				Message: "服务侧不在线",
 			},
 		})
+		udpMsg, _ := json.Marshal(&common.UDPMsg{
+			Code: common.UDP_TYPE_DISCOVERY,
+			Data: msg,
+		})
 		//回一个包，确认打通udp通道。
-		go l.WriteMsgBylconn(add, msg)
+		//conn.WriteToUDP(udpMsg, add)
+		go l.WriteToUdb(udpMsg, add)
 		return
 	} else {
 		// server侧的ip存在
@@ -105,13 +121,20 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg) {
 				Message: string(serverIp),
 			},
 		})
+		udpMsg, _ := json.Marshal(&common.UDPMsg{
+			Code: common.UDP_TYPE_DISCOVERY,
+			Data: msg,
+		})
 		//发给client侧 server的ip地址。
-		go l.WriteMsgBylconn(add, msg)
-		//同时给server侧发送client的ip
-		serverPort, _ := strconv.Atoi(strings.Split(l.PeersGet(req.AppName).Server.Addr, ":")[1])
-		dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(l.PeersGet(req.AppName).Server.Addr, ":")[0]), Port: serverPort}
+		//conn.Write(udpMsg)
+		//conn.WriteToUDP(udpMsg, add)
+		go l.WriteToUdb(udpMsg, add)
+		////同时给server侧发送client的ip
+		//serverPort, _ := strconv.Atoi(strings.Split(l.Peers2Get(req.AppName).Server.Addr, ":")[1])
+		//dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(l.Peers2Get(req.AppName).Server.Addr, ":")[0]), Port: serverPort}
+		dstAddr, _ := net.ResolveUDPAddr("udp", l.Peers2Get(req.AppName).Server.Addr)
 		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
-		msg2server, _ := json.Marshal(common.Msg{
+		msg2server, _ := json.Marshal(&common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS,
 			Res: common.Res{
@@ -119,14 +142,25 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg) {
 				Message: string(clientIp),
 			},
 		})
-		go l.WriteMsg(dstAddr, msg2server)
+		msg2serverudpMsg, _ := json.Marshal(&common.UDPMsg{
+			Code: common.UDP_TYPE_DISCOVERY,
+			Data: msg2server,
+		})
+		if !check {
+			msg2serverudpMsg, _ = json.Marshal(&common.UDPMsg{
+				Code: common.UDP_TYPE_DISCOVERY_FROCE_P2P,
+				Data: msg2server,
+			})
+		}
+		//conn.WriteToUDP(msg2serverudpMsg, dstAddr)
+		go l.WriteToUdb(msg2serverudpMsg, dstAddr)
 		return
 	}
 }
 
 // 处理服务侧的客户端请求
-func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg) {
-	l.checkipInListAndUpdateTime(add.String(), req.AppName, req.Type)
+func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, conn *net.UDPConn) {
+	check := l.checkipInListAndUpdateTimeFroSvc(add.String(), req.AppName, req.Type)
 	//查找client侧的客户端是否有地址
 	peers := l.PeersGet(req.AppName)
 	if peers == nil || peers.Client.Addr == "" {
@@ -138,8 +172,13 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg) {
 				Message: "客户侧不在线",
 			},
 		})
+		udpMsg, _ := json.Marshal(&common.UDPMsg{
+			Code: common.UDP_TYPE_DISCOVERY,
+			Data: msg,
+		})
 		//回一个包，确认打通udp通道。
-		go l.WriteMsgBylconn(add, msg)
+		//conn.WriteToUDP(udpMsg, add)
+		go l.WriteToUdb(udpMsg, add)
 		return
 	} else {
 		//clients有ip存在
@@ -153,7 +192,12 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg) {
 				Message: string(clientIp),
 			},
 		})
-		go l.WriteMsgBylconn(add, msg2server)
+		msg2serverudpMsg, _ := json.Marshal(&common.UDPMsg{
+			Code: common.UDP_TYPE_DISCOVERY,
+			Data: msg2server,
+		})
+		//conn.WriteToUDP(msg2serverudpMsg, add)
+		go l.WriteToUdb(msg2serverudpMsg, add)
 		//对client客户端回server的ip地址。
 		serverIp, _ := json.Marshal(l.PeersGet(req.AppName).Server)
 		msg2client, _ := json.Marshal(common.Msg{
@@ -164,13 +208,20 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg) {
 				Message: string(serverIp),
 			},
 		})
-		client := l.PeersGet(req.AppName).Client
-		go func() {
-			cip := client
-			clientPort, _ := strconv.Atoi(strings.Split(cip.Addr, ":")[1])
-			dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(cip.Addr, ":")[0]), Port: clientPort}
-			l.WriteMsg(dstAddr, msg2client)
-		}()
+		msg2clientudpMsg, _ := json.Marshal(&common.UDPMsg{
+			Code: common.UDP_TYPE_DISCOVERY,
+			Data: msg2client,
+		})
+		if !check {
+			msg2clientudpMsg, _ = json.Marshal(&common.UDPMsg{
+				Code: common.UDP_TYPE_DISCOVERY_FROCE_P2P,
+				Data: msg2client,
+			})
+		}
+		cip := l.Peers2Get(req.AppName).Client
+		dstAddr, _ := net.ResolveUDPAddr("udp", cip.Addr)
+		//conn.WriteToUDP(msg2clientudpMsg, dstAddr)
+		go l.WriteToUdb(msg2clientudpMsg, dstAddr)
 	}
 }
 
@@ -193,6 +244,7 @@ func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType strin
 			l.PeersSet(appName, peers)
 			return true
 		}
+		peers.Client.Time = time.Now()
 		peers.Client.Addr = addr
 	case common.CLIENT_SERVER_TYPE:
 		if peers.Server.Addr == addr {
@@ -201,6 +253,7 @@ func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType strin
 			l.PeersSet(appName, peers)
 			return true
 		}
+		peers.Server.Time = time.Now()
 		peers.Server.Addr = addr
 	}
 	l.PeersSet(appName, peers)
@@ -237,36 +290,96 @@ func (l *UdpListener) PeersKeys() []string {
 	return keys
 }
 
-// 用l的conn回包 3次重试
-func (l *UdpListener) WriteMsgBylconn(add *net.UDPAddr, msg []byte) {
-	rsp, _ := json.Marshal(&common.UDPMsg{
-		Code: common.UDP_TYPE_DISCOVERY,
-		Data: msg,
-	})
-	i := 0
-	for i < 3 {
-		_, err := l.Conn.WriteTo(rsp, add)
-		if err == nil {
-			return
+//   检查客户侧的客户端的Ip是否存在
+func (l *UdpListener) checkipInListAndUpdateTimeFroSvc(addr, appName, clientType string) bool {
+	if l.Peers2Get(appName) == nil {
+		switch clientType {
+		case common.CLIENT_CLIENT_TYPE:
+			l.Peers2Set(appName, &common.Peer{Client: common.Ip{Addr: addr, Time: time.Now()}})
+		case common.CLIENT_SERVER_TYPE:
+			l.Peers2Set(appName, &common.Peer{Server: common.Ip{Addr: addr, Time: time.Now()}})
 		}
-		log.Errorf("write to addr=%s faild", add.String())
-		i++
+		return false
 	}
+	peers := l.Peers2Get(appName)
+	switch clientType {
+	case common.CLIENT_CLIENT_TYPE:
+		if peers.Client.Addr == addr {
+			peers.Client.Time = time.Now()
+			l.Peers2Set(appName, peers)
+			return true
+		}
+		peers.Client.Time = time.Now()
+		peers.Client.Addr = addr
+	case common.CLIENT_SERVER_TYPE:
+		if peers.Server.Addr == addr {
+			//更新时间点
+			peers.Server.Time = time.Now()
+			l.Peers2Set(appName, peers)
+			return true
+		}
+		peers.Server.Time = time.Now()
+		peers.Server.Addr = addr
+	}
+	l.Peers2Set(appName, peers)
+	return false
 }
 
-// 手动发包 3次重试
-func (l *UdpListener) WriteMsg(dstAddr *net.UDPAddr, msg []byte) {
-	rsp, _ := json.Marshal(&common.UDPMsg{
-		Code: common.UDP_TYPE_DISCOVERY,
-		Data: msg,
-	})
-	i := 0
-	for i < 3 {
-		_, err := l.Conn.WriteToUDP(rsp, dstAddr)
-		if err == nil {
-			return
-		}
-		log.Errorf("write to addr=%s faild", dstAddr.String())
-		i++
+// PeersGet 读取peersForSvcTrance
+func (l *UdpListener) Peers2Get(appName string) *common.Peer {
+	l.peersForSvcTrance.Mu.RLock()
+	defer l.peersForSvcTrance.Mu.RUnlock()
+	return l.peersForSvcTrance.peers[appName]
+}
+
+// PeersSet 设置peersForSvcTrance
+func (l *UdpListener) Peers2Set(appName string, peer *common.Peer) {
+	l.peersForSvcTrance.Mu.Lock()
+	defer l.peersForSvcTrance.Mu.Unlock()
+	l.peersForSvcTrance.peers[appName] = peer
+}
+
+func (l *UdpListener) Peers2Count() int {
+	l.peersForSvcTrance.Mu.RLock()
+	defer l.peersForSvcTrance.Mu.RUnlock()
+	return len(l.peersForSvcTrance.peers)
+}
+
+func (l *UdpListener) Peers2Keys() []string {
+	l.peersForSvcTrance.Mu.RLock()
+	defer l.peersForSvcTrance.Mu.RUnlock()
+	keys := make([]string, len(l.peersForSvcTrance.peers))
+	for k := range l.peersForSvcTrance.peers {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// 异步发包 的结构体
+type UdpSend struct {
+	Addr *net.UDPAddr
+	Data []byte
+}
+
+// 将要发送的udp包写入消息队列
+func (l *UdpListener) WriteToUdb(data []byte, addr *net.UDPAddr) {
+	udpSend := UdpSend{
+		Data: data,
+		Addr: addr,
+	}
+	l.ch <- udpSend
+}
+
+// 异步消费发包，提高性能
+func (l *UdpListener) sendBackend(conn *net.UDPConn) {
+	for {
+		udpSend := <-l.ch
+		log.Printf("udp回包 toAddr=%s,data=%s", udpSend.Addr.String(), string(udpSend.Data))
+		go func(conn *net.UDPConn, send UdpSend) {
+			_, err := conn.WriteToUDP(send.Data, send.Addr)
+			if err != nil {
+				log.Errorf("回包失败 err:=%s", err.Error())
+			}
+		}(conn, udpSend)
 	}
 }
