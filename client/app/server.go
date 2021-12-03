@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"github.com/bluele/gcache"
 	"github.com/robfig/cron/v3"
 	"github.com/scjtqs2/p2p_rdp/client/config"
@@ -26,25 +27,25 @@ type Status struct {
 	Time   time.Time
 }
 
-func (l *UdpListener) Run(config *config.ClientConfig) (err error) {
+func (l *UdpListener) Run(ctx context.Context,config *config.ClientConfig) (err error) {
 	l.Conf = config
 	l.Status = &Status{
 		Status: false,
 	}
 	l.Cache = gcache.New(200).LRU().Expiration(10 * time.Second).Build()
 	//单独协程 udp 发包
-	go l.udpSendBackend()
+	go l.udpSendBackend(ctx)
 	//固定本地端口的监听
 	l.LocalConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPort})
 	//处理打洞请求的回包 udp的读取协程
-	go l.localReadHandle()
+	go l.localReadHandle(ctx)
 	//发送初始消息到svc
-	l.initMsgToSvc()
+	l.initMsgToSvc(ctx)
 
 	//初始化rdp的本地监听
-	l.initRdpListener()
+	l.initRdpListener(ctx)
 	//l.initRdpUdpListen()
 	//发送心跳包维活
-	l.startCron()
+	l.startCron(ctx)
 	return nil
 }

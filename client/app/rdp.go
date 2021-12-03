@@ -11,7 +11,7 @@ import (
 	"net"
 )
 
-func (l *UdpListener) initRdpListener() {
+func (l *UdpListener) initRdpListener(ctx context.Context) {
 	var err error
 	switch l.Conf.Type {
 	case common.CLIENT_CLIENT_TYPE:

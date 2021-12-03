@@ -11,7 +11,7 @@ import (
 
 //用来发送心跳包
 
-func (l *UdpListener) startCron() {
+func (l *UdpListener) startCron(ctx context.Context) {
 	l.Cron = cron.New(cron.WithParser(cron.NewParser(
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)))
@@ -54,7 +54,6 @@ var p2pChan = make(chan bool, 5)
 
 //触发 p2p打洞
 func (l *UdpListener) writeToP2P(ctx context.Context) {
-	defer ctx.Done()
 	p2pChan <- true
 }
 

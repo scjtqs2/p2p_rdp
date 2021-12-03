@@ -27,7 +27,6 @@ func (l *UdpListener) WriteMsgToSvr(msg []byte, seq string) {
 
 // WriteMsgToClient 给另一侧的client客户端发包
 func (l *UdpListener) WriteMsgToClient(ctx context.Context, msg []byte, seq string) {
-	defer ctx.Done()
 	if l.ClientServerIp.Addr == "" {
 		log.Error("没有获取到另一侧的ip地址")
 		return
@@ -37,7 +36,6 @@ func (l *UdpListener) WriteMsgToClient(ctx context.Context, msg []byte, seq stri
 }
 
 func (l *UdpListener) WriteMsgToRdp(ctx context.Context, msg []byte) {
-	defer ctx.Done()
 	RdpWriteChan <- msg
 }
 
@@ -67,7 +65,7 @@ type UdpWrite struct {
 }
 
 // 增加回包校验
-func (l *UdpListener) udpSendBackend() {
+func (l *UdpListener) udpSendBackend(ctx context.Context) {
 	for {
 		udpWrite := <-UdpWriteChan
 		if l.checkSeq(udpWrite.Seq) {

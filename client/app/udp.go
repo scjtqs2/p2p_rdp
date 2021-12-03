@@ -9,7 +9,7 @@ import (
 )
 
 // 发送信息给svc
-func (l *UdpListener) initMsgToSvc() {
+func (l *UdpListener) initMsgToSvc(ctx context.Context) {
 	log.Infof("发送消息给svc，addr=%s:%d", l.Conf.ServerHost, l.Conf.ServerPort)
 	req := &common.Msg{AppName: l.Conf.AppName}
 	switch l.Conf.Type {
@@ -26,7 +26,7 @@ func (l *UdpListener) initMsgToSvc() {
 }
 
 // 本地udp端口 消息读取处理
-func (l *UdpListener) localReadHandle() {
+func (l *UdpListener) localReadHandle(contx context.Context) {
 	for {
 		data := make([]byte, common.PACKAGE_SIZE)
 		n, remodeAddr, err := l.LocalConn.ReadFromUDP(data[:])
@@ -39,7 +39,7 @@ func (l *UdpListener) localReadHandle() {
 		if err != nil {
 			continue
 		}
-		ctx := context.WithValue(context.Background(), "seq", msg.Seq)
+		ctx := context.WithValue(contx, "seq", msg.Seq)
 		log.WithContext(ctx)
 		if msg.Seq != "" && msg.Code != common.UDP_TYPE_SEQ_RESPONSE {
 			go l.returnSeq(msg.Seq, remodeAddr)
@@ -54,7 +54,6 @@ func (l *UdpListener) localReadHandle() {
 			log.Infof("心跳包 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
 			l.Status.Status = true
 			l.Status.Time = time.Now()
-			ctx.Done()
 			continue
 		case common.UDP_TYPE_BI_DIRECTION_HOLE:
 			log.Infof("打洞消息 remoteAddr=%s msg=%s", remodeAddr, string(msg.Data))
@@ -86,7 +85,6 @@ func (l *UdpListener) localReadHandle() {
 			go l.rdpUdpWrite(ctx, msg.Data, msg.Addr)
 		case common.UDP_TYPE_SEQ_RESPONSE:
 			log.Debugf("seq res,seq:%s", msg.Seq)
-			ctx.Done()
 		}
 	}
 }

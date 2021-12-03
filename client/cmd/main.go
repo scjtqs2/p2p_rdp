@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"github.com/scjtqs2/p2p_rdp/client/app"
 	"github.com/scjtqs2/p2p_rdp/client/config"
@@ -40,11 +41,13 @@ func main() {
 	if d {
 		util.Daemon()
 	}
+	ctx:=context.Background()
+	log.WithContext(ctx)
 	conf := config.GetConfigFronPath(configPath)
 	conf.Save(configPath)
 	log.Infof("welcome to use p2p_rdp client  by scjtqs  https://github.com/scjtqs2/p2p_rdp/client %s,build in %s", Version, Build)
 	udplistener := &app.UdpListener{}
-	udplistener.Run(conf)
+	udplistener.Run(ctx,conf)
 	defer udplistener.LocalConn.Close()
 	defer udplistener.Cron.Stop()
 	c := make(chan os.Signal, 1)
