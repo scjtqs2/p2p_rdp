@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"github.com/bluele/gcache"
 	"github.com/robfig/cron/v3"
 	"github.com/scjtqs2/kcp-go/v5"
@@ -44,10 +43,6 @@ func (l *UdpListener) Run(ctx context.Context, config *config.ClientConfig) (err
 		panic(err)
 	}
 	l.ClientConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.ClientPortForP2PTrance})
-	if err != nil {
-		panic(err)
-	}
-	l.Client2, err = NewKcpConnWithUDPConn(l.ClientConn, fmt.Sprintf("%s:%d", l.Conf.ServerHost, l.Conf.ServerPort))
 	if err != nil {
 		panic(err)
 	}

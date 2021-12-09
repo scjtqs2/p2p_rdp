@@ -13,7 +13,7 @@ func (l *UdpListener) startCron(ctx context.Context) {
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)))
 	//定时执行任务
-	l.Cron.AddFunc("*/30 * * * * *", l.keepAliveSendToSvcReport)
+	//l.Cron.AddFunc("*/30 * * * * *", l.keepAliveSendToSvcReport)
 	l.Cron.AddFunc("*/5 * * * * *", l.keepaliveSendToSvcGetIp)
 	l.Cron.AddFunc("*/5 * * * * *", l.checkStatusCron)
 	l.Cron.Start()
