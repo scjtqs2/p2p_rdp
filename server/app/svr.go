@@ -16,7 +16,7 @@ type UdpListener struct {
 	peers             Peers //专门用于rdp转发的p2p端口的地址
 	peersForSvcTrance Peers //专门用于和svc通信的p2p端口的地址
 	Cron              *cron.Cron
-	ch                chan UdpSend
+	//ch                chan UdpSend
 }
 
 type Peers struct {
@@ -32,8 +32,8 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 		log.Errorf("监听udp失败 host=%s:%d ,err=%s", config.Host, config.Port, err.Error())
 		return err
 	}
-	go l.sendBackend(conn)
-	l.ch = make(chan UdpSend, 128)
+	//go l.sendBackend(conn)
+	//l.ch = make(chan UdpSend, 128)
 	log.Printf("本地地址: <0.0.0.0:%d> ", l.Port)
 	l.peers = Peers{
 		peers: make(map[string]*common.Peer),
@@ -107,8 +107,8 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg, con
 			Data: msg,
 		})
 		//回一个包，确认打通udp通道。
-		//conn.WriteToUDP(udpMsg, add)
-		go l.WriteToUdb(udpMsg, add)
+		conn.WriteToUDP(udpMsg, add)
+		//go l.WriteToUdb(udpMsg, add)
 		return
 	} else {
 		// server侧的ip存在
@@ -126,12 +126,9 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg, con
 			Data: msg,
 		})
 		//发给client侧 server的ip地址。
-		//conn.Write(udpMsg)
-		//conn.WriteToUDP(udpMsg, add)
-		go l.WriteToUdb(udpMsg, add)
-		////同时给server侧发送client的ip
-		//serverPort, _ := strconv.Atoi(strings.Split(l.Peers2Get(req.AppName).Server.Addr, ":")[1])
-		//dstAddr := &net.UDPAddr{IP: net.ParseIP(strings.Split(l.Peers2Get(req.AppName).Server.Addr, ":")[0]), Port: serverPort}
+		conn.WriteToUDP(udpMsg, add)
+		//go l.WriteToUdb(udpMsg, add)
+		//同时给server侧发送client的ip
 		dstAddr, _ := net.ResolveUDPAddr("udp", l.Peers2Get(req.AppName).Server.Addr)
 		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
 		msg2server, _ := json.Marshal(&common.Msg{
@@ -152,8 +149,8 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg, con
 				Data: msg2server,
 			})
 		}
-		//conn.WriteToUDP(msg2serverudpMsg, dstAddr)
-		go l.WriteToUdb(msg2serverudpMsg, dstAddr)
+		conn.WriteToUDP(msg2serverudpMsg, dstAddr)
+		//go l.WriteToUdb(msg2serverudpMsg, dstAddr)
 		return
 	}
 }
@@ -177,8 +174,8 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, con
 			Data: msg,
 		})
 		//回一个包，确认打通udp通道。
-		//conn.WriteToUDP(udpMsg, add)
-		go l.WriteToUdb(udpMsg, add)
+		conn.WriteToUDP(udpMsg, add)
+		//go l.WriteToUdb(udpMsg, add)
 		return
 	} else {
 		//clients有ip存在
@@ -196,8 +193,8 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, con
 			Code: common.UDP_TYPE_DISCOVERY,
 			Data: msg2server,
 		})
-		//conn.WriteToUDP(msg2serverudpMsg, add)
-		go l.WriteToUdb(msg2serverudpMsg, add)
+		conn.WriteToUDP(msg2serverudpMsg, add)
+		//go l.WriteToUdb(msg2serverudpMsg, add)
 		//对client客户端回server的ip地址。
 		serverIp, _ := json.Marshal(l.PeersGet(req.AppName).Server)
 		msg2client, _ := json.Marshal(common.Msg{
@@ -220,8 +217,8 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, con
 		}
 		cip := l.Peers2Get(req.AppName).Client
 		dstAddr, _ := net.ResolveUDPAddr("udp", cip.Addr)
-		//conn.WriteToUDP(msg2clientudpMsg, dstAddr)
-		go l.WriteToUdb(msg2clientudpMsg, dstAddr)
+		conn.WriteToUDP(msg2clientudpMsg, dstAddr)
+		//go l.WriteToUdb(msg2clientudpMsg, dstAddr)
 	}
 }
 
@@ -354,32 +351,32 @@ func (l *UdpListener) Peers2Keys() []string {
 	}
 	return keys
 }
-
-// 异步发包 的结构体
-type UdpSend struct {
-	Addr *net.UDPAddr
-	Data []byte
-}
-
-// 将要发送的udp包写入消息队列
-func (l *UdpListener) WriteToUdb(data []byte, addr *net.UDPAddr) {
-	udpSend := UdpSend{
-		Data: data,
-		Addr: addr,
-	}
-	l.ch <- udpSend
-}
-
-// 异步消费发包，提高性能
-func (l *UdpListener) sendBackend(conn *net.UDPConn) {
-	for {
-		udpSend := <-l.ch
-		log.Printf("udp回包 toAddr=%s,data=%s", udpSend.Addr.String(), string(udpSend.Data))
-		go func(conn *net.UDPConn, send UdpSend) {
-			_, err := conn.WriteToUDP(send.Data, send.Addr)
-			if err != nil {
-				log.Errorf("回包失败 err:=%s", err.Error())
-			}
-		}(conn, udpSend)
-	}
-}
+//
+//// 异步发包 的结构体
+//type UdpSend struct {
+//	Addr *net.UDPAddr
+//	Data []byte
+//}
+//
+//// 将要发送的udp包写入消息队列
+//func (l *UdpListener) WriteToUdb(data []byte, addr *net.UDPAddr) {
+//	udpSend := UdpSend{
+//		Data: data,
+//		Addr: addr,
+//	}
+//	l.ch <- udpSend
+//}
+//
+//// 异步消费发包，提高性能
+//func (l *UdpListener) sendBackend(conn *net.UDPConn) {
+//	for {
+//		udpSend := <-l.ch
+//		log.Printf("udp回包 toAddr=%s,data=%s", udpSend.Addr.String(), string(udpSend.Data))
+//		go func(conn *net.UDPConn, send UdpSend) {
+//			_, err := conn.WriteToUDP(send.Data, send.Addr)
+//			if err != nil {
+//				log.Errorf("回包失败 err:=%s", err.Error())
+//			}
+//		}(conn, udpSend)
+//	}
+//}
