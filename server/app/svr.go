@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/robfig/cron/v3"
 	"github.com/scjtqs2/p2p_rdp/common"
 	"github.com/scjtqs2/p2p_rdp/server/config"
@@ -13,8 +14,8 @@ import (
 
 type UdpListener struct {
 	Port              int
-	peers             Peers //专门用于rdp转发的p2p端口的地址
-	peersForSvcTrance Peers //专门用于和svc通信的p2p端口的地址
+	peers             *Peers //专门用于rdp转发的p2p端口的地址
+	peersForSvcTrance *Peers //专门用于和svc通信的p2p端口的地址
 	Cron              *cron.Cron
 	//ch                chan UdpSend
 }
@@ -26,7 +27,9 @@ type Peers struct {
 
 //Run 启动脚本
 func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.Port})
+	udpAddr, _ := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", config.Host, config.Port))
+	//conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: config.Port})
+	conn, err := net.ListenUDP("udp", udpAddr)
 	l.Port = config.Port
 	if err != nil {
 		log.Errorf("监听udp失败 host=%s:%d ,err=%s", config.Host, config.Port, err.Error())
@@ -34,12 +37,12 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 	}
 	//go l.sendBackend(conn)
 	//l.ch = make(chan UdpSend, 128)
-	log.Printf("本地地址: <0.0.0.0:%d> ", l.Port)
-	l.peers = Peers{
+	log.Printf("本地地址: <%s:%d> ", config.Host, l.Port)
+	l.peers = &Peers{
 		peers: make(map[string]*common.Peer),
 		Mu:    &sync.RWMutex{},
 	}
-	l.peersForSvcTrance = Peers{
+	l.peersForSvcTrance = &Peers{
 		peers: make(map[string]*common.Peer),
 		Mu:    &sync.RWMutex{},
 	}
@@ -68,10 +71,10 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 				switch msg.Type {
 				case common.CLIENT_SERVER_TYPE:
 					log.Infof("group %s server type of client req addr:%s", msg.AppName, remoteAddr)
-					go l.progressServerClient(remoteAddr, msg, conn)
+					l.progressServerClient(remoteAddr, msg, conn)
 				case common.CLIENT_CLIENT_TYPE:
 					log.Infof("group %s client type of client req addr:%s", msg.AppName, remoteAddr)
-					go l.progressClientClient(remoteAddr, msg, conn)
+					l.progressClientClient(remoteAddr, msg, conn)
 				default:
 					log.Errorf("error type of udp req")
 					continue
@@ -86,14 +89,16 @@ func (l *UdpListener) Run(config *config.ServerConfig) (err error) {
 func (l *UdpListener) progressReport(req common.UDPMsg, add net.Addr) {
 	var msg common.Msg
 	json.Unmarshal(req.Data, &msg)
+	log.Infof("report group %s type %s req addr:%s", msg.AppName, msg.Type, add.String())
 	l.checkipInListAndUpdateTime(add.String(), msg.AppName, msg.Type)
 }
 
 //progressClientClient 处理客户侧的客户端请求
 func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg, conn *net.UDPConn) {
 	check := l.checkipInListAndUpdateTimeFroSvc(add.String(), req.AppName, req.Type)
+	peers := l.PeersGet(req.AppName)
 	//查找server侧的客户端地址并返回
-	if l.PeersGet(req.AppName) == nil || l.PeersGet(req.AppName).Server.Addr == "" {
+	if peers == nil || peers.Server.Addr == "" {
 		msg, _ := json.Marshal(&common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
@@ -129,8 +134,9 @@ func (l *UdpListener) progressClientClient(add *net.UDPAddr, req common.Msg, con
 		conn.WriteToUDP(udpMsg, add)
 		//go l.WriteToUdb(udpMsg, add)
 		//同时给server侧发送client的ip
-		dstAddr, _ := net.ResolveUDPAddr("udp", l.Peers2Get(req.AppName).Server.Addr)
-		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
+		peers2 := l.Peers2Get(req.AppName)
+		dstAddr, _ := net.ResolveUDPAddr("udp", peers2.Server.Addr)
+		clientIp, _ := json.Marshal(peers.Client)
 		msg2server, _ := json.Marshal(&common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS,
@@ -180,7 +186,7 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, con
 	} else {
 		//clients有ip存在
 		//直接回包client侧ip的地址列表
-		clientIp, _ := json.Marshal(l.PeersGet(req.AppName).Client)
+		clientIp, _ := json.Marshal(peers.Client)
 		msg2server, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_SERVER_WITH_CLIENT_IPS,
@@ -196,7 +202,7 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, con
 		conn.WriteToUDP(msg2serverudpMsg, add)
 		//go l.WriteToUdb(msg2serverudpMsg, add)
 		//对client客户端回server的ip地址。
-		serverIp, _ := json.Marshal(l.PeersGet(req.AppName).Server)
+		serverIp, _ := json.Marshal(peers.Server)
 		msg2client, _ := json.Marshal(common.Msg{
 			AppName: req.AppName,
 			Type:    common.MESSAGE_TYPE_FOR_CLIENT_CLIENT_WITH_SERVER_IPS,
@@ -224,7 +230,8 @@ func (l *UdpListener) progressServerClient(add *net.UDPAddr, req common.Msg, con
 
 //   检查客户侧的客户端的Ip是否存在
 func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType string) bool {
-	if l.PeersGet(appName) == nil {
+	peers := l.PeersGet(appName)
+	if peers == nil {
 		switch clientType {
 		case common.CLIENT_CLIENT_TYPE:
 			l.PeersSet(appName, &common.Peer{Client: common.Ip{Addr: addr, Time: time.Now()}})
@@ -233,24 +240,21 @@ func (l *UdpListener) checkipInListAndUpdateTime(addr, appName, clientType strin
 		}
 		return false
 	}
-	peers := l.PeersGet(appName)
 	switch clientType {
 	case common.CLIENT_CLIENT_TYPE:
+		peers.Client.Time = time.Now()
 		if peers.Client.Addr == addr {
-			peers.Client.Time = time.Now()
 			l.PeersSet(appName, peers)
 			return true
 		}
-		peers.Client.Time = time.Now()
 		peers.Client.Addr = addr
 	case common.CLIENT_SERVER_TYPE:
+		peers.Server.Time = time.Now()
 		if peers.Server.Addr == addr {
 			//更新时间点
-			peers.Server.Time = time.Now()
 			l.PeersSet(appName, peers)
 			return true
 		}
-		peers.Server.Time = time.Now()
 		peers.Server.Addr = addr
 	}
 	l.PeersSet(appName, peers)
@@ -289,33 +293,31 @@ func (l *UdpListener) PeersKeys() []string {
 
 //   检查客户侧的客户端的Ip是否存在
 func (l *UdpListener) checkipInListAndUpdateTimeFroSvc(addr, appName, clientType string) bool {
-	if l.Peers2Get(appName) == nil {
+	peers := l.Peers2Get(appName)
+	if peers == nil {
 		switch clientType {
 		case common.CLIENT_CLIENT_TYPE:
-			l.Peers2Set(appName, &common.Peer{Client: common.Ip{Addr: addr, Time: time.Now()}})
+			l.Peers2Set(appName, &common.Peer{Client: common.Ip{Addr: addr, Time: time.Now()}, Server: common.Ip{Addr: ""}})
 		case common.CLIENT_SERVER_TYPE:
-			l.Peers2Set(appName, &common.Peer{Server: common.Ip{Addr: addr, Time: time.Now()}})
+			l.Peers2Set(appName, &common.Peer{Server: common.Ip{Addr: addr, Time: time.Now()}, Client: common.Ip{Addr: ""}})
 		}
 		return false
 	}
-	peers := l.Peers2Get(appName)
 	switch clientType {
 	case common.CLIENT_CLIENT_TYPE:
+		peers.Client.Time = time.Now()
 		if peers.Client.Addr == addr {
-			peers.Client.Time = time.Now()
 			l.Peers2Set(appName, peers)
 			return true
 		}
-		peers.Client.Time = time.Now()
 		peers.Client.Addr = addr
 	case common.CLIENT_SERVER_TYPE:
+		peers.Server.Time = time.Now()
 		if peers.Server.Addr == addr {
 			//更新时间点
-			peers.Server.Time = time.Now()
 			l.Peers2Set(appName, peers)
 			return true
 		}
-		peers.Server.Time = time.Now()
 		peers.Server.Addr = addr
 	}
 	l.Peers2Set(appName, peers)
@@ -351,6 +353,7 @@ func (l *UdpListener) Peers2Keys() []string {
 	}
 	return keys
 }
+
 //
 //// 异步发包 的结构体
 //type UdpSend struct {

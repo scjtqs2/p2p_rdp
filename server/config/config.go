@@ -26,7 +26,7 @@ func GetConfigFronPath(c string) *ServerConfig {
 
 func defaultConf() *ServerConfig {
 	return &ServerConfig{
-		Host: "",
+		Host: "0.0.0.0",
 		Port: 30124,
 	}
 }
