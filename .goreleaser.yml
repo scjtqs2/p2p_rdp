@@ -1,0 +1,155 @@
+env:
+  - GO111MODULE=on
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: nowin-server
+    main: ./server/cmd
+    binary: server
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - 386
+      - amd64
+      - arm
+      - arm64
+    goarm:
+      - 7
+    ignore:
+      - goos: darwin
+        goarch: arm
+      - goos: darwin
+        goarch: 386
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version=v{{.Version}}
+
+  - id: win-server
+    main: ./server/cmd
+    binary: server
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      - windows
+    goarch:
+      - 386
+      - amd64
+      - arm
+#      - arm64
+    goarm:
+      - 7
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version=v{{.Version}}
+
+  - id: nowin-client
+    main: ./client/cmd
+    binary: client
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - 386
+      - amd64
+      - arm
+      - arm64
+    goarm:
+      - 7
+    ignore:
+      - goos: darwin
+        goarch: arm
+      - goos: darwin
+        goarch: 386
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version=v{{.Version}}
+
+  - id: win-client
+    main: ./client/cmd
+    binary: client
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      - windows
+    goarch:
+      - 386
+      - amd64
+      - arm
+#      - arm64
+    goarm:
+      - 7
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version=v{{.Version}}
+
+checksum:
+  name_template: "{{ .ProjectName }}_checksums.txt"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - fix typo
+      - Merge pull request
+      - Merge branch
+      - Merge remote-tracking
+      - go mod tidy
+
+archives:
+  - id: binary-server
+    builds:
+      - win-server
+    name_template: "{{ .ProjectName }}_server_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    format_overrides:
+      - goos: windows
+        format: binary
+  - id: binary-client
+    builds:
+      - win-client
+    name_template: "{{ .ProjectName }}_client_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    format_overrides:
+      - goos: windows
+        format: binary
+  - id: nowin-server
+    builds:
+      - nowin-server
+      - win-server
+    name_template: "{{ .ProjectName }}_server_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+  - id: nowin-client
+    builds:
+      - nowin-client
+      - win-client
+    name_template: "{{ .ProjectName }}_client_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+#nfpms:
+#  - license: AGPL 3.0
+#    homepage: https://go-cqhttp.org
+#    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+#    formats:
+#      - deb
+#      - rpm
+#    maintainer: Mrs4s
