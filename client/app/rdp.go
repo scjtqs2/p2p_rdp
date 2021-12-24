@@ -15,7 +15,7 @@ import (
 
 const (
 	ScaVengeTTL  = 600
-	AutoExpire   = 0
+	AutoExpire   = 60
 	SmuxBuf      = 4194304
 	StreamBuf    = 2097152
 	KeepAlive    = 10
@@ -24,8 +24,8 @@ const (
 	SndWnd       = 1024
 	RcvWnd       = 1024
 	DSCP         = 0
-	NoDelay      = 0
-	Interval     = 30
+	NoDelay      = 1
+	Interval     = 20
 	Resend       = 2
 	NoCongestion = 1
 	sockbuf      = 4194304
